@@ -11,6 +11,7 @@ Version 2.0 | April 2026 | Team: 4 Engineers | Budget: 20 Hours
 OmegaClaw Glasses Runtime is a general-purpose, OpenClaw-style assistant for Meta Ray-Ban glasses. The product combines:
 
 - a live multimodal interaction layer for low-latency voice and vision
+- an optional media enrichment layer for deeper image metadata
 - OmegaClaw as the planner, router, and delegation layer
 - Agentverse skills as specialist capabilities
 
@@ -27,7 +28,7 @@ Example requests the runtime should eventually support:
 - "Book a reservation here."
 - "Send a message about what I just saw."
 
-Important architectural note: OmegaClaw is the orchestration and delegation layer, not the live audio-video layer. For this build, Gemini Live remains the real-time multimodal session layer because it already solves low-latency voice, turn-taking, and visual context. OmegaClaw sits behind that live loop and decides which skill to invoke.
+Important architectural note: OmegaClaw is the orchestration and delegation layer, not the live audio-video layer. For this build, Gemini Live remains the real-time multimodal session layer because it already solves low-latency voice, turn-taking, and visual context. OmegaClaw sits behind that live loop and decides which skill to invoke. A future Cloudinary Media API tool can sit between Gemini Live and OmegaClaw as an enrichment layer, giving Gemini additional image metadata before it packages task context for OmegaClaw.
 
 This project has two deliverables with equal weight:
 
@@ -45,6 +46,7 @@ The product should be presented as a reusable glasses runtime with a stable dele
 - The glasses are the interface.
 - The user speaks naturally.
 - The runtime sees what the user sees.
+- The live layer may enrich visual context with Cloudinary metadata when the request needs stronger OCR, tags, object hints, derived media, or safety signals.
 - OmegaClaw decides whether direct response or specialist delegation is appropriate.
 - Agentverse skills perform specialist work.
 - The result comes back either as spoken audio or as a confirmed external action plus spoken status, depending on the task type.
