@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from .channels import my_backend
+from .protocol import make_loop_response, new_tool_call_id
 from .remote.agentverse_bridge import invoke_remote_skill
 
 
@@ -18,6 +19,7 @@ class OmegaClawAgentLoop:
             return False
 
         request_id = str(message.get("request_id", ""))
+        tool_call_id = str(message.get("tool_call_id") or new_tool_call_id())
         intent = str(message.get("intent", ""))
         args = message.get("args", {})
         if not isinstance(args, dict):
@@ -30,18 +32,27 @@ class OmegaClawAgentLoop:
                 "confidence": "low",
                 "source": "omegaclaw:no_match",
             }
+            response = make_loop_response(
+                request_id=request_id,
+                tool_call_id=tool_call_id,
+                skill_name=skill_name,
+                result=result,
+                args=args,
+                error="no_matching_skill",
+            )
         else:
             result = await invoke_remote_skill(skill_name=skill_name, args=args)
-
-        my_backend.send_message(
-            json.dumps(
-                {
-                    "request_id": request_id,
-                    "skill_name": skill_name,
-                    "result": result,
-                }
+            error = result.get("error") if isinstance(result, dict) else None
+            response = make_loop_response(
+                request_id=request_id,
+                tool_call_id=tool_call_id,
+                skill_name=skill_name,
+                result=result,
+                args=args,
+                error=str(error) if error else None,
             )
-        )
+
+        my_backend.send_message(json.dumps(response))
         return True
 
     @staticmethod

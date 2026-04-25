@@ -30,6 +30,7 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
         loop = OmegaClawAgentLoop()
         inbound = {
             "request_id": "req-1",
+            "tool_call_id": "tc-1",
             "intent": "google this",
             "args": {"query": "latest fetch ai news"},
         }
@@ -47,8 +48,11 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
                 self.assertTrue(mocked_send.called)
                 payload = json.loads(mocked_send.call_args.args[0])
                 self.assertEqual(payload["request_id"], "req-1")
+                self.assertEqual(payload["tool_call_id"], "tc-1")
                 self.assertEqual(payload["skill_name"], "google_search")
                 self.assertEqual(payload["result"]["summary"], "ok")
+                self.assertEqual(payload["events"][0]["phase"], "started")
+                self.assertEqual(payload["events"][1]["phase"], "result")
                 return did_work
 
         self.assertTrue(asyncio.run(_run()))
@@ -57,6 +61,7 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
         loop = OmegaClawAgentLoop()
         inbound = {
             "request_id": "req-2",
+            "tool_call_id": "tc-2",
             "intent": "sing a song",
             "args": {},
         }
@@ -72,6 +77,8 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
                 payload = json.loads(mocked_send.call_args.args[0])
                 self.assertEqual(payload["skill_name"], "unknown")
                 self.assertEqual(payload["result"]["source"], "omegaclaw:no_match")
+                self.assertEqual(payload["events"][1]["phase"], "error")
+                self.assertEqual(payload["events"][1]["error"], "no_matching_skill")
 
         asyncio.run(_run())
 
