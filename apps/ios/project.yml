@@ -61,3 +61,6 @@ targets:
       - path: MetaGlassesAgentTests
     dependencies:
       - target: MetaGlassesAgent
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
