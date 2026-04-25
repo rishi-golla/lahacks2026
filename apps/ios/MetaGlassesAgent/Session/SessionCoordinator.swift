@@ -35,6 +35,7 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var lastPhoto: UIImage?
     @Published private(set) var toolEventsLog: [ToolEvent] = []
     @Published private(set) var debugLog: [String] = []
+    @Published private(set) var isLoopbackRunning = false
 
     private let glasses: GlassesSession
     private let audioPipeline: AudioPipeline
@@ -115,6 +116,31 @@ final class SessionCoordinator: ObservableObject {
             appendDebug("Captured and sent photo")
         } catch {
             appendDebug("Photo failed: \(error.localizedDescription)")
+        }
+    }
+
+    func runLoopbackTest() async {
+        guard !isLoopbackRunning else {
+            return
+        }
+
+        isLoopbackRunning = true
+        appendDebug("Loopback: recording 3 seconds...")
+        defer {
+            isLoopbackRunning = false
+        }
+
+        do {
+            let result = try await audioPipeline.runLoopback(recordingSeconds: 3) { [weak self] line in
+                Task { @MainActor in
+                    self?.appendDebug(line)
+                }
+            }
+            appendDebug(
+                "Loopback: \(result.chunkCount) chunks, \(result.totalBytes) bytes, ~\(String(format: "%.2f", result.estimatedPlaybackSeconds))s playback"
+            )
+        } catch {
+            appendDebug("Loopback failed: \(error.localizedDescription)")
         }
     }
 

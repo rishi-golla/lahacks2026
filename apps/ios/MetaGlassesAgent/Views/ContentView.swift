@@ -49,6 +49,14 @@ struct ContentView: View {
                     }
                     .buttonStyle(.bordered)
 
+                    Button(viewModel.coordinator.isLoopbackRunning ? "Recording..." : "Loopback Test") {
+                        Task {
+                            await viewModel.coordinator.runLoopbackTest()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.coordinator.isLoopbackRunning)
+
                     Spacer()
                 }
 

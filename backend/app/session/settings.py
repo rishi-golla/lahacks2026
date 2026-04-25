@@ -1,0 +1,57 @@
+"""Environment-driven settings for live session adapters."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+from functools import lru_cache
+
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class LiveBackend(StrEnum):
+    ECHO = "echo"
+    GEMINI = "gemini"
+
+
+class SessionSettings(BaseSettings):
+    """Settings used to select and configure the live session backend."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    live_backend: LiveBackend = Field(default=LiveBackend.ECHO, alias="LIVE_BACKEND")
+    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_live_model: str = Field(
+        default="gemini-live-2.5-flash-preview",
+        alias="GEMINI_LIVE_MODEL",
+    )
+    gemini_api_version: str = Field(default="v1alpha", alias="GEMINI_API_VERSION")
+    gemini_response_modalities: tuple[str, ...] = Field(
+        default=("TEXT",),
+        alias="GEMINI_RESPONSE_MODALITIES",
+    )
+
+    @field_validator("gemini_response_modalities", mode="before")
+    @classmethod
+    def normalize_response_modalities(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(part.strip() for part in value.split(",") if part.strip())
+        return value
+
+    @model_validator(mode="after")
+    def validate_gemini_credentials(self) -> SessionSettings:
+        if self.live_backend is LiveBackend.GEMINI and not self.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is required when LIVE_BACKEND=gemini")
+        return self
+
+
+@lru_cache(maxsize=1)
+def get_session_settings() -> SessionSettings:
+    """Load and cache live session settings from the environment."""
+
+    return SessionSettings()
