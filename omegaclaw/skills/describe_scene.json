@@ -1,0 +1,20 @@
+{
+  "skill_name": "describe_scene",
+  "description": "Describe what the user is looking at based on camera frame context.",
+  "trigger_phrases": [
+    "what am I looking at",
+    "describe this",
+    "what is this",
+    "what do I see",
+    "describe the scene"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "image_context": "string"
+  },
+  "output_schema": {
+    "description": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}

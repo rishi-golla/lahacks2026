@@ -1,0 +1,7 @@
+[
+  {"case": "readable_badge_known_person", "name": "Elon Musk", "org": "xAI", "title": "CEO", "expected_confidence": "high"},
+  {"case": "readable_badge_less_known", "name": "Sarah Chen", "org": "Fetch.ai", "title": "CTO", "expected_confidence": "high"},
+  {"case": "unreadable_badge", "name": "", "org": "", "title": "", "expected_confidence": "low"},
+  {"case": "unknown_person", "name": "John Smith", "org": "Acme Corp", "title": "Engineer", "expected_confidence": "low"},
+  {"case": "partial_info", "name": "Alex Kumar", "org": "Ritual", "title": "", "expected_confidence": "high"}
+]
