@@ -34,8 +34,9 @@ targets:
         NSCameraUsageDescription: Used to capture photos from your glasses.
         NSBluetoothAlwaysUsageDescription: Used to connect to your Meta glasses.
         NSLocalNetworkUsageDescription: Used to connect to the local development backend.
-        UIBackgroundModes: [bluetooth-peripheral, external-accessory, audio]
+        UIBackgroundModes: [processing, bluetooth-central, bluetooth-peripheral, external-accessory, audio]
         UISupportedExternalAccessoryProtocols: [com.meta.ar.wearable]
+        NSBonjourServices: [_bonjour._tcp]
         LSApplicationQueriesSchemes: [fb-viewapp]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -47,6 +48,8 @@ targets:
         MWDAT:
           AppLinkURLScheme: metaglassesagent://
           MetaAppID: "0"
+          ClientToken: "0"
+          TeamID: $(DEVELOPMENT_TEAM)
     settings:
       base:
         SWIFT_VERSION: "5.10"

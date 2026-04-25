@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = SessionViewModel()
+    @StateObject private var wearablesViewModel = WearablesViewModel()
 
     var body: some View {
         NavigationStack {
@@ -60,10 +61,17 @@ struct ContentView: View {
                     Spacer()
                 }
 
+                DATStatusView(viewModel: wearablesViewModel)
+
                 DebugView(coordinator: viewModel.coordinator)
             }
             .padding()
             .navigationTitle("Glasses Agent")
+            .onOpenURL { url in
+                Task {
+                    await wearablesViewModel.handleCallbackURL(url)
+                }
+            }
         }
     }
 }
