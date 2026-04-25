@@ -21,6 +21,7 @@ map_ready_event = EVENT_MAPPER.map_ready_event
 map_server_event = EVENT_MAPPER.map_server_event
 map_session_end_event = EVENT_MAPPER.map_session_end_event
 map_session_update_event = EVENT_MAPPER.map_session_update_event
+complete_output_turn = EVENT_MAPPER.complete_output_turn
 map_transcript_in_event = EVENT_MAPPER.map_transcript_in_event
 map_transcript_out_event = EVENT_MAPPER.map_transcript_out_event
 
@@ -110,7 +111,18 @@ class EventMapperTests(unittest.TestCase):
                 "turn_id": "turn-0001",
             },
         )
-        self.assertEqual(state.active_turn_id, "turn-0001")
+        self.assertIsNone(state.active_turn_id)
+
+    def test_complete_output_turn_advances_to_next_synthesized_turn(self) -> None:
+        state = EventMapperState()
+
+        first_payload, state = map_transcript_out_event({"text": "first"}, state)
+        state = complete_output_turn(state)
+        second_payload, state = map_transcript_out_event({"text": "second"}, state)
+
+        self.assertEqual(first_payload["turn_id"], "turn-0001")
+        self.assertEqual(second_payload["turn_id"], "turn-0002")
+        self.assertEqual(state.active_turn_id, "turn-0002")
 
     def test_look_request_and_session_end_match_ios_contract(self) -> None:
         look_payload, _ = map_look_request_event(

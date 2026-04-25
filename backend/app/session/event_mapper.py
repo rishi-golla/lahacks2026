@@ -273,7 +273,7 @@ def map_model_interrupt_event(
         "turnId",
     )
     event = _ModelInterruptEvent(turn_id=turn_id)
-    return event.to_payload(), next_state
+    return event.to_payload(), complete_output_turn(next_state)
 
 
 def map_session_end_event(
@@ -282,7 +282,14 @@ def map_session_end_event(
 ) -> tuple[ServerPayload, EventMapperState]:
     source = _coerce_mapping(payload)
     event = _SessionEndEvent(reason=_require_str(source, "reason", "message"))
-    return event.to_payload(), state or EventMapperState()
+    return event.to_payload(), complete_output_turn(state)
+
+
+def complete_output_turn(state: EventMapperState | None = None) -> EventMapperState:
+    payload_state = state or EventMapperState()
+    if payload_state.active_turn_id is None:
+        return payload_state
+    return replace(payload_state, active_turn_id=None)
 
 
 def _coerce_mapping(payload: SourcePayload | None) -> Mapping[str, Any]:
