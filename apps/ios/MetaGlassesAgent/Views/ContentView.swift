@@ -22,6 +22,11 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                 }
 
+                Text(viewModel.coordinator.latestDebugLine)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 HStack {
                     TextField("Debug text", text: $viewModel.debugText)
                         .textFieldStyle(.roundedBorder)
@@ -33,6 +38,29 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.bordered)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        TextField("Backend WebSocket URL", text: $viewModel.backendURLText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("Apply") {
+                            Task {
+                                await viewModel.applyBackendURL()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if !viewModel.backendURLMessage.isEmpty {
+                        Text(viewModel.backendURLMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 HStack {

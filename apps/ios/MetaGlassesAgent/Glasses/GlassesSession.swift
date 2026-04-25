@@ -9,6 +9,7 @@ enum GlassesState: Equatable {
     case error(String)
 }
 
+@MainActor
 protocol GlassesSession: AnyObject {
     var stateStream: AsyncStream<GlassesState> { get }
 
@@ -20,5 +21,9 @@ protocol GlassesSession: AnyObject {
 
 enum GlassesSessionError: Error, Equatable {
     case photoEncodingFailed
+    case deviceSessionUnavailable
+    case streamSessionUnavailable
+    case photoCaptureRejected
+    case photoCaptureTimedOut
     case notImplemented
 }
