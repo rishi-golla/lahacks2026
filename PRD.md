@@ -211,75 +211,103 @@ Without confirmation, the system is only answering, not acting.
 
 ## 6. Runtime Contract
 
-Every skill added to the runtime should follow the same contract so the app architecture does not change every time a new capability is added.
+Every skill added to OmegaClaw should follow the native OmegaClaw-Core custom-skill model so the agent can discover, call, and reuse the capability through the normal loop.
 
-Required skill contract:
+### 6.1 Custom Skill Goal
 
-- `skill_name`: stable unique identifier
-- `skill_type`: `inform` or `act`
-- `description`: one-sentence purpose
-- `discovery_metadata`: trigger phrases, examples, tags, domain hints
-- `input_schema`: exact structured input fields
-- `output_schema`: exact structured output fields
-- `confirmation_policy`: whether explicit confirmation is required
-- `timeout_ms`: maximum runtime before fallback
-- `failure_behavior`: short user-facing fallback
+The required end-to-end goal is to add a new skill the agent can call.
 
-Runtime guarantees:
+Prerequisites:
 
-- The live layer always speaks to the user in natural language.
-- OmegaClaw always routes using the same dispatch path.
-- Skills only exchange structured data with OmegaClaw.
-- New skills should be addable by registration and backend support, not by redesigning the glasses UI.
+- a local clone of OmegaClaw-Core so the team can edit MeTTa source
+- familiarity with running the agent, as described in OmegaClaw-Core usage docs
 
-### 6.1 Skill Types
+### 6.2 Anatomy Of A Skill
 
-- `inform`: returns information only
-- `act`: performs an external effect after explicit confirmation
+A skill has three parts:
 
-Examples:
+1. An entry in the skill catalogue in `src/skills.metta`, inside the `getSkills` list, so the LLM learns the skill exists.
+2. A MeTTa definition of how the skill executes. Pure-MeTTa skills are written directly; skills that need system access delegate to Python or Prolog.
+3. Optional Python or Prolog glue imported through `py-call` or `translatePredicate`.
 
-- `identify_person`
-- `scene_explain`
-- `purchase_item`
-- `book_reservation`
-- `send_contextual_message`
+### 6.3 Example: `identify-person`
 
-### 6.2 Routing And Delegation Policy
+The project-relevant example skill `(identify-person "name" "organization" "title")` returns a short professional context summary for a visible badge. This is the local OmegaClaw skill that lets the glasses runtime delegate the flagship `identify_person` capability to the Agentverse-backed person-context service.
 
-OmegaClaw should apply the same routing policy to every incoming request:
+Step 1: declare it in `getSkills`.
 
-1. Understand user request from live audio plus visual context.
-2. Decide whether the request can be answered directly.
-3. If ambiguous, ask a short follow-up question.
-4. If delegation is needed, rank available skills by intent fit, schema fit, and expected latency.
-5. If best match is `inform`, invoke it and summarize the result.
-6. If best match is `act`, request a preview, speak it, and wait for explicit confirmation before execution.
-7. If no skill matches with enough confidence, say the capability is unavailable rather than fabricate a result.
+Open `src/skills.metta` and add a line inside the `getSkills` list:
 
-This routing layer is the heart of the "OpenClaw in glasses" behavior. The user should experience one assistant, even though multiple specialist skills may exist behind the scenes.
+```metta
+"- Identify a visible badge wearer and return short professional context: (identify-person name_in_quotes organization_in_quotes title_in_quotes)"
+```
 
-### 6.3 Future Skill Examples
+This text is concatenated into the prompt so the LLM knows the skill is callable.
 
-To make extensibility concrete, the PRD should explicitly name future skills:
+Step 2: define the implementation.
 
-- `scene_explain`: summarize what the user is looking at
-- `purchase_item`: identify and buy a visible item
-- `event_lookup`: read a badge, poster, or booth sign and return event context
-- `book_reservation`: delegate booking after previewing time and place
-- `send_contextual_message`: draft or send a message based on what the user sees and says
+Still in `src/skills.metta`, add:
 
-Only one of these needs to be polished for the prize demo. The point is to show a reusable runtime, not a one-off badge reader.
+```metta
+(= (identify-person $name $organization $title)
+   (py-call (agentverse.identify_person $name $organization $title)))
+```
 
-### 6.4 OmegaClaw-Core Extension Model
+The Python bridge function should package the badge fields, send them to the fixed Agentverse address for the registered person-context agent, and return a normalized summary string or a compact structured result that can be spoken by the live layer.
 
-This PRD follows the extension model documented in OmegaClaw-Core:
+Conceptual bridge function:
 
-- add a local skill by declaring it in `src/skills.metta`
-- add a remote skill by exposing a local MeTTa skill whose body delegates to the Python bridge in `src/agentverse.py`
-- add a channel by creating a Python adapter in `channels/` and wiring it into `src/channels.metta`
+```python
+def identify_person(name: str, organization: str, title: str) -> str:
+    # Send {name, organization, title} to the registered Agentverse agent.
+    # Return a short summary suitable for LAST_SKILL_USE_RESULTS.
+    ...
+```
 
-This matters because the runtime should integrate with OmegaClaw using its intended seams rather than bypassing the agent loop with custom side paths.
+Step 3: test.
+
+Restart the agent and ask:
+
+```text
+who is Angela from LA Hacks?
+```
+
+When Gemini Live or the backend has extracted badge fields, the LLM should emit:
+
+```metta
+(identify-person "Angela" "LA Hacks" "Organizer")
+```
+
+The expected response is a short context result, for example:
+
+```text
+Angela is an LA Hacks organizer. Confidence: high.
+```
+
+### 6.4 Skill Conventions
+
+- Skill names are lowercase and hyphen-separated.
+- Every argument is a string literal in quotes.
+- Variables are forbidden in LLM-generated skill calls; the loop rejects them in `getContext`.
+- Return a value that is safe to render into the `LAST_SKILL_USE_RESULTS` context.
+- The loop runs the result through `helper.normalize_string`.
+- If a skill may fail, wrap error-producing subcalls in `catch` or let them fall through to the loop's `HandleError`.
+
+### 6.5 Verification
+
+A new custom skill is considered integrated when:
+
+- the new skill appears in the prompt, verified by searching logs for the skill name
+- the LLM invokes it without prompt tweaks
+- the return value shows up in `LAST_SKILL_USE_RESULTS` on the next turn
+
+### 6.6 Next OmegaClaw References
+
+The team should use these OmegaClaw-Core references when extending this runtime:
+
+- `reference-internals-skill-dispatch.md`: how dispatch works
+- `reference-internals-extension-points.md`: other places to hook in
+- `tutorial-06-remote-agentverse-skills.md`: delegate skills to a remote agent instead of running them locally
 
 ---
 
