@@ -57,4 +57,10 @@ class OmegaClawAgentLoop:
             for phrase in ("what am i looking at", "describe", "what do i see", "what is this")
         ):
             return "describe_scene"
+        if any(phrase in lowered for phrase in ("google", "search for", "look up")):
+            return "google_search"
+        if any(phrase in lowered for phrase in ("calendar", "meeting", "schedule", "event")):
+            return "google_calendar"
+        if any(phrase in lowered for phrase in ("email", "gmail", "send mail", "draft email")):
+            return "gmail"
         return "unknown"

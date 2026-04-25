@@ -1,0 +1,21 @@
+{
+  "skill_name": "google_calendar",
+  "description": "Create, update, or list calendar events through the user's connected calendar agent.",
+  "trigger_phrases": [
+    "add to my calendar",
+    "schedule meeting",
+    "what's on my calendar",
+    "create event"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "command": "string",
+    "datetime": "string",
+    "details": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}
