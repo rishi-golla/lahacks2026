@@ -3,6 +3,11 @@ import UIKit
 
 @MainActor
 final class SessionCoordinator: ObservableObject {
+    private enum VisualContextEvent {
+        case frame(UIImage)
+        case firstFrameTimeout
+    }
+
     enum Status: Equatable {
         case idle
         case connecting
@@ -39,6 +44,7 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var isLoopbackRunning = false
     @Published private(set) var isMicStreaming = false
     @Published private(set) var isVisualContextStreaming = false
+    @Published private(set) var visualContextSourceLabel = "Idle"
 
     private let glasses: GlassesSession
     private let glassesSourceLabel: String
@@ -52,6 +58,8 @@ final class SessionCoordinator: ObservableObject {
     private var sessionResumeToken: String?
     private var sentAudioChunkCount = 0
     private var sentVisualFrameCount = 0
+    private let visualStreamFirstFrameTimeoutNanoseconds: UInt64 = 3_000_000_000
+    private let visualFallbackIntervalNanoseconds: UInt64 = 1_500_000_000
 
     init(
         glasses: GlassesSession,
@@ -310,6 +318,7 @@ final class SessionCoordinator: ObservableObject {
 
         sentVisualFrameCount = 0
         isVisualContextStreaming = true
+        visualContextSourceLabel = "Starting"
         appendDebug("Auto visual context started via \(glassesSourceLabel)")
         visualContextTask = Task { [weak self] in
             guard let self else {
@@ -317,24 +326,99 @@ final class SessionCoordinator: ObservableObject {
             }
             defer {
                 isVisualContextStreaming = false
+                visualContextSourceLabel = "Idle"
             }
 
-            for await image in glasses.videoFrames(at: 1) {
+            let events = visualContextEvents(
+                from: glasses.videoFrames(at: 1),
+                firstFrameTimeoutNanoseconds: visualStreamFirstFrameTimeoutNanoseconds
+            )
+
+            for await event in events {
                 if Task.isCancelled {
                     break
                 }
 
-                do {
-                    let jpeg = try photoCapture.resizeAndEncode(image)
-                    lastPhoto = UIImage(data: jpeg) ?? image
-                    let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .auto)
-                    appendDebug("Auto visual frame prepared: \(jpeg.count) bytes via \(glassesSourceLabel)")
-                    try await backend.send(.photo(message))
-                    sentVisualFrameCount += 1
-                    appendDebug("Auto visual frame sent: \(jpeg.count) bytes via \(glassesSourceLabel)")
-                } catch {
-                    appendDebug("Auto visual frame failed via \(glassesSourceLabel): \(error.localizedDescription)")
+                switch event {
+                case .frame(let image):
+                    visualContextSourceLabel = "Video stream"
+                    await sendAutoVisualFrame(image)
+                case .firstFrameTimeout:
+                    guard sentVisualFrameCount == 0 else {
+                        continue
+                    }
+                    appendDebug("Auto visual stream timed out; using still capture fallback")
+                    await runStillCaptureVisualFallback()
+                    return
                 }
+            }
+        }
+    }
+
+    private func sendAutoVisualFrame(_ image: UIImage) async {
+        do {
+            let jpeg = try photoCapture.resizeAndEncode(image)
+            await sendAutoVisualJPEG(jpeg, fallbackImage: image)
+        } catch {
+            appendDebug("Auto visual frame failed via \(glassesSourceLabel): \(error.localizedDescription)")
+        }
+    }
+
+    private func runStillCaptureVisualFallback() async {
+        visualContextSourceLabel = "Still capture fallback"
+
+        while !Task.isCancelled {
+            do {
+                let jpeg = try await photoCapture.captureJPEG(from: glasses)
+                await sendAutoVisualJPEG(jpeg, fallbackImage: nil)
+            } catch is CancellationError {
+                break
+            } catch {
+                appendDebug("Still capture fallback failed via \(glassesSourceLabel): \(error.localizedDescription)")
+            }
+
+            try? await Task.sleep(nanoseconds: visualFallbackIntervalNanoseconds)
+        }
+    }
+
+    private func sendAutoVisualJPEG(_ jpeg: Data, fallbackImage: UIImage?) async {
+        lastPhoto = UIImage(data: jpeg) ?? fallbackImage
+        let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .auto)
+        appendDebug("Auto visual frame prepared: \(jpeg.count) bytes via \(glassesSourceLabel)")
+
+        do {
+            try await backend.send(.photo(message))
+            sentVisualFrameCount += 1
+            appendDebug("Auto visual frame sent: \(jpeg.count) bytes via \(glassesSourceLabel)")
+        } catch {
+            appendDebug("Auto visual frame send failed via \(glassesSourceLabel): \(error.localizedDescription)")
+        }
+    }
+
+    private func visualContextEvents(
+        from frames: AsyncStream<UIImage>,
+        firstFrameTimeoutNanoseconds: UInt64
+    ) -> AsyncStream<VisualContextEvent> {
+        AsyncStream { continuation in
+            let timeoutTask = Task {
+                try? await Task.sleep(nanoseconds: firstFrameTimeoutNanoseconds)
+                guard !Task.isCancelled else {
+                    return
+                }
+                continuation.yield(.firstFrameTimeout)
+            }
+
+            let frameTask = Task {
+                for await image in frames {
+                    timeoutTask.cancel()
+                    continuation.yield(.frame(image))
+                }
+                continuation.finish()
+            }
+
+            continuation.onTermination = { _ in
+                timeoutTask.cancel()
+                frameTask.cancel()
             }
         }
     }
@@ -346,6 +430,7 @@ final class SessionCoordinator: ObservableObject {
         visualContextTask = nil
         isMicStreaming = false
         isVisualContextStreaming = false
+        visualContextSourceLabel = "Idle"
 
         try? await backend.send(.audioEnd)
     }

@@ -72,9 +72,13 @@ struct ContentView: View {
                 Text("What Gemini sees")
                     .font(.headline)
                 Spacer()
-                Text(viewModel.glassesMode.label)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(viewModel.glassesMode.label)
+                        .font(.caption.weight(.medium))
+                    Text(viewModel.coordinator.visualContextSourceLabel)
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
             }
 
             if let image = viewModel.coordinator.lastPhoto {
@@ -282,7 +286,7 @@ struct ContentView: View {
         switch viewModel.coordinator.status {
         case .live:
             if viewModel.coordinator.isMicStreaming && viewModel.coordinator.isVisualContextStreaming {
-                return "Listening now. Visual context is streaming."
+                return "Listening now. Visual context: \(viewModel.coordinator.visualContextSourceLabel)."
             }
             if viewModel.coordinator.isMicStreaming {
                 return "Listening now. Waiting for visual context."
