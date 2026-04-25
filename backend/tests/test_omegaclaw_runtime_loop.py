@@ -82,6 +82,31 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
 
         asyncio.run(_run())
 
+    def test_run_once_handles_explicit_unsupported_skill_name_as_no_match(self) -> None:
+        loop = OmegaClawAgentLoop()
+        inbound = {
+            "request_id": "req-3",
+            "tool_call_id": "tc-3",
+            "intent": "whatever",
+            "skill_name": "unsupported_skill",
+            "args": {},
+        }
+
+        async def _run() -> None:
+            mocked_remote = AsyncMock(return_value={"summary": "should-not-run"})
+            with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
+                "omegaclaw.runtime_loop.invoke_remote_skill", mocked_remote
+            ), patch("omegaclaw.runtime_loop.my_backend.send_message") as mocked_send:
+                did_work = await loop.run_once()
+                self.assertTrue(did_work)
+                mocked_remote.assert_not_awaited()
+                payload = json.loads(mocked_send.call_args.args[0])
+                self.assertEqual(payload["skill_name"], "unsupported_skill")
+                self.assertEqual(payload["result"]["source"], "omegaclaw:no_match")
+                self.assertEqual(payload["events"][1]["phase"], "error")
+
+        asyncio.run(_run())
+
 
 if __name__ == "__main__":
     unittest.main()

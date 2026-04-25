@@ -26,6 +26,7 @@ def load_skill_config(skill_name: str) -> dict:
 
 async def invoke_remote_skill(skill_name: str, args: dict) -> dict:
     cfg = load_skill_config(skill_name)
+    timeout_s = _skill_timeout_seconds(cfg)
     endpoint = cfg.get("endpoint")
     if endpoint:
         url = endpoint
@@ -53,7 +54,7 @@ async def invoke_remote_skill(skill_name: str, args: dict) -> dict:
     else:
         return _fallback_response(skill_name, "unsupported_skill")
 
-    return await _invoke_with_retry(url, payload, skill_name)
+    return await _invoke_with_retry(url, payload, skill_name, timeout_s=timeout_s)
 
 
 async def invoke_identify_person(name: str, org: str, title: str) -> dict:
@@ -84,11 +85,28 @@ async def invoke_gmail(command: str, recipient: str, subject: str, body: str) ->
     )
 
 
-async def _invoke_with_retry(url: str, payload: dict, skill_name: str) -> dict:
+def _skill_timeout_seconds(cfg: dict) -> float:
+    timeout_ms = cfg.get("timeout_ms")
+    if isinstance(timeout_ms, int) and timeout_ms > 0:
+        return timeout_ms / 1000.0
+    return SKILL_TIMEOUT_S
+
+
+def _should_retry_status(status_code: int) -> bool:
+    return status_code == 429 or 500 <= status_code <= 599
+
+
+async def _invoke_with_retry(
+    url: str,
+    payload: dict,
+    skill_name: str,
+    *,
+    timeout_s: float,
+) -> dict:
     last_error = None
     for attempt in range(MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=SKILL_TIMEOUT_S) as client:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
@@ -98,12 +116,14 @@ async def _invoke_with_retry(url: str, payload: dict, skill_name: str) -> dict:
                     return {**data, "source": f"agentverse:{skill_name}"}
                 return {"summary": str(data), "confidence": "low", "source": f"agentverse:{skill_name}"}
         except httpx.TimeoutException:
-            last_error = f"timeout after {SKILL_TIMEOUT_S}s"
+            last_error = f"timeout after {timeout_s}s"
             log.warning("skill_timeout skill=%s attempt=%d", skill_name, attempt + 1)
         except httpx.HTTPStatusError as e:
-            last_error = f"HTTP {e.response.status_code}"
-            log.warning("skill_http_error skill=%s status=%d", skill_name, e.response.status_code)
-            break
+            status_code = e.response.status_code
+            last_error = f"HTTP {status_code}"
+            log.warning("skill_http_error skill=%s status=%d", skill_name, status_code)
+            if not _should_retry_status(status_code):
+                break
         except Exception as e:
             last_error = str(e)
             log.warning("skill_error skill=%s error=%s", skill_name, e)

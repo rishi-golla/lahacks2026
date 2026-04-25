@@ -13,6 +13,14 @@ from .remote.agentverse_bridge import invoke_remote_skill
 class OmegaClawAgentLoop:
     """Processes channel messages through one dispatch loop."""
 
+    _KNOWN_SKILLS = {
+        "identify_person",
+        "describe_scene",
+        "google_search",
+        "google_calendar",
+        "gmail",
+    }
+
     async def run_once(self) -> bool:
         message = my_backend.getLastMessage()
         if message is None:
@@ -25,8 +33,9 @@ class OmegaClawAgentLoop:
         if not isinstance(args, dict):
             args = {}
 
-        skill_name = str(message.get("skill_name") or self._classify(intent, args))
-        if skill_name == "unknown":
+        requested_skill_name = str(message.get("skill_name") or "")
+        skill_name = requested_skill_name or self._classify(intent, args)
+        if skill_name == "unknown" or (requested_skill_name and skill_name not in self._KNOWN_SKILLS):
             result = {
                 "summary": "I don't have a matching skill for that request yet.",
                 "confidence": "low",

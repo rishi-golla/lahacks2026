@@ -59,6 +59,23 @@ class RemoteBridgeTests(unittest.TestCase):
         self.assertIn("Gmail", gmail["summary"])
         self.assertEqual(gmail["confidence"], "low")
 
+    def test_invoke_remote_skill_uses_skill_timeout_override(self) -> None:
+        async def _run() -> None:
+            with patch.object(bridge, "load_skill_config", return_value={"timeout_ms": 2500}), patch.object(
+                bridge,
+                "_invoke_with_retry",
+                return_value={"summary": "ok"},
+            ) as mocked:
+                await bridge.invoke_remote_skill("describe_scene", {"image_context": "desk"})
+                self.assertEqual(mocked.await_args.kwargs["timeout_s"], 2.5)
+
+        asyncio.run(_run())
+
+    def test_retry_status_policy(self) -> None:
+        self.assertTrue(bridge._should_retry_status(429))  # noqa: SLF001
+        self.assertTrue(bridge._should_retry_status(503))  # noqa: SLF001
+        self.assertFalse(bridge._should_retry_status(404))  # noqa: SLF001
+
 
 if __name__ == "__main__":
     unittest.main()
