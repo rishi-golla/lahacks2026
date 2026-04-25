@@ -1,0 +1,22 @@
+{
+  "skill_name": "identify_person",
+  "description": "Identify a person from their name badge and return professional context as spoken audio.",
+  "trigger_phrases": [
+    "who is this",
+    "identify this person",
+    "who am I looking at",
+    "tell me about this person",
+    "who is that"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "name": "string",
+    "organization": "string",
+    "title": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}
