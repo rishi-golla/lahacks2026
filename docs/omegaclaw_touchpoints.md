@@ -22,6 +22,22 @@ This documents the exact integration seams used to satisfy the PRD channel + rem
     - `(receive)` -> `my_backend.getLastMessage`
     - `(send $msg)` -> `my_backend.send_message`
 
+### Required MeTTa configuration to select backend channel
+
+Set these values before `initChannels` runs:
+
+```metta
+(configure commchannel my_backend)
+(configure MY_BACKEND_URL "ws://localhost:8000/session")
+(configure MY_BACKEND_SECRET "dev-secret-or-empty")
+(configure MY_BACKEND_POLL_MS 50)
+```
+
+Selection behavior:
+
+- `commchannel = my_backend` enables the backend channel branch in `initChannels`, `receive`, and `send`.
+- if `commchannel` is not `my_backend`, backend channel hooks are not used.
+
 ## Single-loop dispatch path
 
 - `omegaclaw/runtime_loop.py`
