@@ -1,0 +1,22 @@
+{
+  "skill_name": "gmail",
+  "description": "Draft or send an email after explicit user confirmation.",
+  "trigger_phrases": [
+    "send an email",
+    "draft an email",
+    "gmail",
+    "email this"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "command": "string",
+    "recipient": "string",
+    "subject": "string",
+    "body": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}

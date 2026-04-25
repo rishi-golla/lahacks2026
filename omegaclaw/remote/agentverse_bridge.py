@@ -66,6 +66,23 @@ async def invoke_identify_person(name: str, org: str, title: str) -> dict:
 async def invoke_describe_scene(image_context: str) -> dict:
     return await invoke_remote_skill("describe_scene", {"image_context": image_context})
 
+async def invoke_google_search(query: str) -> dict:
+    return await invoke_remote_skill("google_search", {"query": query})
+
+
+async def invoke_google_calendar(command: str, datetime: str, details: str) -> dict:
+    return await invoke_remote_skill(
+        "google_calendar",
+        {"command": command, "datetime": datetime, "details": details},
+    )
+
+
+async def invoke_gmail(command: str, recipient: str, subject: str, body: str) -> dict:
+    return await invoke_remote_skill(
+        "gmail",
+        {"command": command, "recipient": recipient, "subject": subject, "body": body},
+    )
+
 
 async def _invoke_with_retry(url: str, payload: dict, skill_name: str) -> dict:
     last_error = None
@@ -99,4 +116,10 @@ async def _invoke_with_retry(url: str, payload: dict, skill_name: str) -> dict:
 def _fallback_response(skill_name: str, error: str) -> dict:
     if skill_name == "identify_person":
         return {"summary": "I could not find information on that person right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "google_search":
+        return {"summary": "I could not run Google search right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "google_calendar":
+        return {"summary": "I could not access Google Calendar right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "gmail":
+        return {"summary": "I could not access Gmail right now.", "confidence": "low", "source": "fallback", "error": error}
     return {"description": "I could not describe the scene right now.", "confidence": "low", "source": "fallback", "error": error}

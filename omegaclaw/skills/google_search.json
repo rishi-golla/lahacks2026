@@ -1,0 +1,19 @@
+{
+  "skill_name": "google_search",
+  "description": "Search the web and return concise, relevant results.",
+  "trigger_phrases": [
+    "google this",
+    "search for",
+    "look up",
+    "find information on"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "query": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}
