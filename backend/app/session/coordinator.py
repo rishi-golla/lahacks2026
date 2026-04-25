@@ -407,6 +407,15 @@ class SessionCoordinator:
             return
 
         log.info("session received session_id=%s type=%s", session.session_id, message_type)
+        if isinstance(message, PhotoFrame):
+            log.info(
+                "session received photo session_id=%s trigger=%s tool_call_id=%s b64_chars=%s ts_ms=%s",
+                session.session_id,
+                message.trigger.value,
+                message.tool_call_id,
+                len(message.jpeg_b64),
+                message.ts_ms,
+            )
         session.lifecycle_state = next_state
 
         if isinstance(message, HelloMessage):
@@ -416,7 +425,20 @@ class SessionCoordinator:
         if isinstance(message, PhotoFrame) and message.trigger is PhotoTrigger.TOOL_LOOK:
             try:
                 resolved = session.look_loop.complete_request(message)
+                log.info(
+                    "session completed look_request session_id=%s tool_call_id=%s photo_b64_chars=%s photo_ts_ms=%s",
+                    session.session_id,
+                    resolved.tool_call_id,
+                    len(resolved.photo_jpeg_b64 or ""),
+                    resolved.photo_ts_ms,
+                )
             except (UnknownLookRequestError, ValueError) as exc:
+                log.warning(
+                    "session failed look_request photo correlation session_id=%s tool_call_id=%s error=%s",
+                    session.session_id,
+                    message.tool_call_id,
+                    exc,
+                )
                 await self._send_error(
                     sender,
                     "protocol_violation",

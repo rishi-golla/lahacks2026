@@ -39,19 +39,23 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var isLoopbackRunning = false
 
     private let glasses: GlassesSession
+    private let glassesSourceLabel: String
     private let audioPipeline: AudioPipeline
     private let backend: BackendClient
     private let photoCapture = PhotoCapture()
     private var receiveTask: Task<Void, Never>?
+    private var glassesStateTask: Task<Void, Never>?
     private var sessionResumeToken: String?
 
     init(
         glasses: GlassesSession,
-        audioPipeline: AudioPipeline = AudioPipeline(),
+        glassesSourceLabel: String? = nil,
+        audioPipeline: AudioPipeline? = nil,
         backendURL: URL
     ) {
         self.glasses = glasses
-        self.audioPipeline = audioPipeline
+        self.glassesSourceLabel = glassesSourceLabel ?? String(describing: type(of: glasses))
+        self.audioPipeline = audioPipeline ?? AudioPipeline()
         self.backend = BackendClient(url: backendURL)
     }
 
@@ -64,6 +68,7 @@ final class SessionCoordinator: ObservableObject {
         appendDebug("Starting session")
 
         do {
+            startGlassesStateObserver()
             appendDebug("Starting glasses session")
             try await glasses.start()
             appendDebug("Glasses session ready")
@@ -82,6 +87,8 @@ final class SessionCoordinator: ObservableObject {
     func stop() async {
         receiveTask?.cancel()
         receiveTask = nil
+        glassesStateTask?.cancel()
+        glassesStateTask = nil
         backend.close()
         await audioPipeline.stop()
         await glasses.stop()
@@ -113,13 +120,15 @@ final class SessionCoordinator: ObservableObject {
 
     func captureDebugPhoto() async {
         do {
+            appendDebug("Manual photo capture starting via \(glassesSourceLabel)")
             let jpeg = try await photoCapture.captureJPEG(from: glasses)
             lastPhoto = UIImage(data: jpeg)
             let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .userRequest)
+            appendDebug("Manual photo captured: \(jpeg.count) bytes via \(glassesSourceLabel)")
             try await backend.send(.photo(message))
-            appendDebug("Captured and sent photo")
+            appendDebug("Manual photo sent: trigger=\(message.trigger.rawValue), ts=\(message.timestampMs)")
         } catch {
-            appendDebug("Photo failed: \(error.localizedDescription)")
+            appendDebug("Manual photo failed via \(glassesSourceLabel): \(error.localizedDescription)")
         }
     }
 
@@ -166,6 +175,19 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
+    private func startGlassesStateObserver() {
+        glassesStateTask?.cancel()
+        glassesStateTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            for await state in glasses.stateStream {
+                appendDebug("Glasses: \(label(for: state))")
+            }
+        }
+    }
+
     private func handle(_ message: ServerMessage) async {
         switch message {
         case .ready(let ready):
@@ -176,7 +198,10 @@ final class SessionCoordinator: ObservableObject {
             appendDebug("Session token refreshed")
         case .audioChunk(let chunk):
             if let data = Data(base64Encoded: chunk.pcmBase64) {
+                appendDebug("Received audio chunk: \(data.count) bytes @ \(chunk.sampleRate)Hz")
                 await audioPipeline.player.enqueue(pcm: data, sampleRate: chunk.sampleRate, turnID: chunk.turnID)
+            } else {
+                appendDebug("Received invalid audio chunk")
             }
         case .transcriptIn(let transcript):
             lastUserTranscript = transcript.text
@@ -185,6 +210,7 @@ final class SessionCoordinator: ObservableObject {
         case .toolEvent(let event):
             toolEventsLog.insert(event, at: 0)
         case .lookRequest(let request):
+            appendDebug("Received look_request: id=\(request.toolCallID), reason=\(request.reason)")
             await handleLookRequest(request)
         case .modelInterrupt(let interrupt):
             await audioPipeline.player.interrupt(turnID: interrupt.turnID)
@@ -197,7 +223,6 @@ final class SessionCoordinator: ObservableObject {
             }
         case .sessionEnd(let sessionEnd):
             appendDebug("Session ended: \(sessionEnd.reason)")
-            status = .ended
         case .echo(let echo):
             appendDebug("Echo: \(echo.received)")
         case .unknown(let type, _):
@@ -207,13 +232,15 @@ final class SessionCoordinator: ObservableObject {
 
     private func handleLookRequest(_ request: LookRequest) async {
         do {
+            appendDebug("look_request capture starting via \(glassesSourceLabel)")
             let jpeg = try await photoCapture.captureJPEG(from: glasses)
             lastPhoto = UIImage(data: jpeg)
             let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .toolLook, toolCallID: request.toolCallID)
+            appendDebug("look_request photo captured: \(jpeg.count) bytes via \(glassesSourceLabel)")
             try await backend.send(.photo(message))
-            appendDebug("Responded to look_request: \(request.reason)")
+            appendDebug("look_request photo sent: id=\(request.toolCallID), trigger=\(message.trigger.rawValue)")
         } catch {
-            appendDebug("look_request failed: \(error.localizedDescription)")
+            appendDebug("look_request failed via \(glassesSourceLabel): \(error.localizedDescription)")
         }
     }
 
@@ -222,6 +249,23 @@ final class SessionCoordinator: ObservableObject {
         debugLog.insert(line, at: 0)
         if debugLog.count > 100 {
             debugLog.removeLast(debugLog.count - 100)
+        }
+    }
+
+    private func label(for state: GlassesState) -> String {
+        switch state {
+        case .stopped:
+            return "stopped"
+        case .connecting:
+            return "connecting"
+        case .ready:
+            return "ready"
+        case .streaming:
+            return "streaming"
+        case .paused:
+            return "paused"
+        case .error(let message):
+            return "error - \(message)"
         }
     }
 }

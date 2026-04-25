@@ -59,9 +59,6 @@ final class DATGlassesSession: GlassesSession {
         streamSession = stream
         setupListeners(for: stream)
         await stream.start()
-        guard await waitForStreamReady(timeoutSeconds: 10) else {
-            throw GlassesSessionError.streamSessionUnavailable
-        }
 
         continuation.yield(.ready)
     }
@@ -280,7 +277,7 @@ final class DATGlassesSession: GlassesSession {
         case .stopped:
             continuation.yield(.ready)
         case .waitingForDevice, .starting, .stopping:
-            break
+            continuation.yield(.connecting)
         }
     }
 }

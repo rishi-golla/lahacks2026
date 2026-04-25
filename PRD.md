@@ -35,7 +35,7 @@ This project has two deliverables with equal weight:
 1. a reusable OmegaClaw-to-Agentverse glasses runtime plus at least one working skill registration
 2. a Meta glasses demo proving the runtime works in a real interaction flow
 
-Current status honesty check: the repository is not yet a full replication of VisionClaw. It is a VisionClaw-compatible scaffold with the right client-server protocol shape, an iOS session shell, basic audio plumbing, and mock glasses support. The remaining work is to replace the backend echo server with a real Gemini Live bridge, wire continuous audio streaming, complete DAT camera integration, and connect OmegaClaw plus Agentverse end to end.
+Current status honesty check: the repository is not yet a full replication of VisionClaw. It now has a thin iOS debug app, mock/real glasses modes, audio loopback/playback, a real FastAPI -> Gemini Live bridge, local OmegaClaw integration modules, and a checked-in ContextLens skill service. The remaining work is to make vision prompts deterministically send fresh photos, verify real DAT still capture on hardware, declare/handle Gemini tools, and connect Gemini tool calls into OmegaClaw plus Agentverse end to end.
 
 ---
 
@@ -87,7 +87,7 @@ OmegaClaw docs context incorporated into this PRD:
 
 ## 4. VisionClaw Parity Status
 
-The repo should currently be described as scaffold-level, not full parity.
+The repo should currently be described as an active prototype, not full parity.
 
 Already present:
 
@@ -106,18 +106,17 @@ Partially present:
 - tool event message schema
 - look-request handling on the client
 
-Missing for parity:
+Missing or not yet reliable for parity:
 
-- real Gemini Live proxy
-- continuous audio streaming loop
-- live transcripts and streamed model audio
-- actual DAT still capture and optional frame access
+- deterministic photo capture before vision prompts
+- actual Gemini tool declarations and tool-call handling
+- real DAT still capture and optional frame access verified on hardware
 - real tool dispatch
 - OmegaClaw invocation
 - Agentverse invocation
 - interruption and look flow verified end to end on device
 
-Bottom line: this is a VisionClaw-compatible scaffold, not a full VisionClaw replication, until the checklist in Section 11 is complete.
+Bottom line: this is a VisionClaw-compatible prototype, not a full VisionClaw replication, until the checklist in Section 11 is complete.
 
 ---
 
@@ -578,33 +577,32 @@ The project should only claim VisionClaw-equivalent capability when all items be
 | iOS session shell | Present | works against real backend messages |
 | Mic capture | Present | streams continuously during live session |
 | PCM playback | Present | reliable streamed playback plus interruption |
-| Backend live model bridge | Missing | Gemini Live session proxy replaces echo backend |
-| Input transcripts | Missing end to end | backend emits real transcript events |
-| Output transcripts | Missing end to end | backend emits partial and final model transcript events |
+| Backend live model bridge | Present | Gemini Live session proxy replaces echo backend |
+| Input transcripts | Partial | backend emits transcript events when Gemini provides them |
+| Output transcripts | Present | backend emits output transcript events |
 | Tool dispatch | Missing | backend routes model tool calls into OmegaClaw |
-| Look request loop | Partial | backend requests images and consumes them correctly |
-| OmegaClaw integration | Missing | real request-response path |
-| Agentverse integration | Missing | registered skill invoked successfully |
-| DAT still capture | Partial | paired glasses capture real images |
-| End-to-end spoken response | Missing | speech -> routing -> spoken reply works on device |
+| Look request loop | Dormant | iOS and backend correlation exist, but Gemini tools are not declared |
+| OmegaClaw integration | Partial | local modules exist; Gemini `agent` tool is not wired |
+| Agentverse integration | Partial | `contextlens-agent/` exists; live invocation path is not wired |
+| DAT still capture | Partial | code exists; paired glasses capture needs verification |
+| End-to-end spoken response | Partial | typed iOS -> Gemini -> spoken reply works; full speech/tool flow pending |
 
 ### 11.2 Phases
 
 | Phase | Hours | Goal | Gate |
 |-------|-------|------|------|
-| 0: Scaffold Validation | 0-2 | verify current app and backend shell | iOS app connects to `/session` and debug controls work |
-| 1: Live Bridge | 2-6 | replace echo backend with Gemini Live bridge | user speech produces transcript and audio reply |
+| 0: Scaffold Validation | 0-2 | verify app and backend shell | iOS app connects to `/session` and debug controls work |
+| 1: Live Bridge | 2-6 | Gemini Live bridge | user text/photo produces transcript and audio reply |
 | 2: Tool Path | 6-10 | route first flagship skill through OmegaClaw to Agentverse | user asks for flagship skill and gets spoken result |
 | 3: Hardware Path | 10-16 | replace mock capture with real glasses capture | same flagship flow works on glasses hardware |
 | 4: Polish And Demo Prep | 16-20 | rehearse, harden failure handling, produce judging artifacts | dry run passes reliably |
 
 ### 11.3 Ordered Plan
 
-1. Validate the current scaffold on device.
-2. Replace the echo backend with a real Gemini Live bridge.
+1. Verify deterministic fresh-photo vision prompts on iPhone.
+2. Verify real glasses still capture.
 3. Add backend-side tool dispatch into OmegaClaw and onward into Agentverse.
 4. Verify the first flagship skill on iPhone.
-5. Replace placeholder DAT capture with real glasses capture.
 6. Only then spend time on optional action-taking skills.
 
 ### 11.4 Checklists
@@ -615,14 +613,14 @@ Phase 0:
 - confirm `/session` connection
 - confirm mock glasses path works
 - confirm audio initialization
-- verify current backend is still scaffold-level
+- verify backend runs in Gemini mode and can handle multiple turns
 - read OmegaClaw-Core Tutorial 04, Tutorial 06, the channels reference, and the extension-points reference before locking integration design
 
 Phase 1:
 
-- replace echo backend with Gemini Live coordinator
-- forward audio, text, and photo events
-- emit transcripts, audio chunks, look requests, and interrupts
+- keep Gemini Live coordinator stable
+- forward audio, text, and photo events through realtime input
+- emit transcripts, audio chunks, session updates, and interrupts
 - verify one complete speech round-trip
 
 Phase 2:
@@ -712,24 +710,24 @@ Track 1: iOS Client And Glasses Hardware
 
 - current code exists in `apps/ios/MetaGlassesAgent`
 - current strengths: session UI, debug UI, mic capture, PCM playback, mock glasses mode
-- current gaps: no continuous mic streaming loop from `MicCapture` into backend, DAT still capture still uses placeholders, DAT frame access is incomplete
+- current gaps: deterministic photo-before-vision prompt behavior is not implemented; real DAT still capture needs hardware verification
 
 Track 2: Backend Live Bridge
 
 - current code exists in `backend/app`
-- current strengths: FastAPI app shell, `/session` route, structured message protocol already modeled on the iOS side
-- current gaps: backend is still an echo server, no Gemini Live session coordinator, no transcript or audio streaming, no look-request loop
+- current strengths: FastAPI app, `/session` route, real Gemini Live adapter, turn-scoped receive handling, photo forwarding, audio output, session update forwarding
+- current gaps: Gemini tools are not declared; no `look`/`agent` function-call handling yet
 
 Track 3: OmegaClaw Integration Layer
 
 - current PRD now reflects OmegaClaw-Core channel and remote-skill patterns
-- current strengths: architecture is defined, channel-adapter and remote-skill patterns are documented
-- current gaps: no actual `channels/my_backend.py`, no `src/channels.metta` wiring, no confirmed bridge into OmegaClaw loop, no end-to-end remote skill dispatch implemented
+- current strengths: channel adapter, MeTTa wiring, runtime loop, remote bridge, skill configs, and tests are checked in
+- current gaps: no Gemini `agent` tool invokes this path yet; no end-to-end live-session remote skill dispatch
 
 Track 4: Flagship Agentverse Skill And QA
 
-- current strengths: flagship skill scope is defined as `identify_person`, schemas and response shape are clear
-- current gaps: no deployed Agentverse skill implementation in the repo yet, no production request path, no external verification, no demo-quality evaluation harness
+- current strengths: `contextlens-agent/` service, models, eval fixtures, and README are checked in
+- current gaps: deployment/registration/external verification and live-session invocation are still pending
 
 ---
 

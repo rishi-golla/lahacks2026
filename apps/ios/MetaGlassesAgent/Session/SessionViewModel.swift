@@ -35,7 +35,11 @@ final class SessionViewModel: ObservableObject {
         let mode = Self.savedGlassesMode()
         self.backendURLText = url.absoluteString
         self.glassesMode = mode
-        self.coordinator = SessionCoordinator(glasses: Self.makeGlassesSession(mode: mode), backendURL: url)
+        self.coordinator = SessionCoordinator(
+            glasses: Self.makeGlassesSession(mode: mode),
+            glassesSourceLabel: mode.label,
+            backendURL: url
+        )
         observeCoordinator()
     }
 
@@ -73,6 +77,7 @@ final class SessionViewModel: ObservableObject {
     private func rebuildCoordinator(backendURL: URL) {
         coordinator = SessionCoordinator(
             glasses: Self.makeGlassesSession(mode: glassesMode),
+            glassesSourceLabel: glassesMode.label,
             backendURL: backendURL
         )
     }

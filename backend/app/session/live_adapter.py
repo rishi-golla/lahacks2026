@@ -170,7 +170,11 @@ class GeminiLiveAdapter:
             await self._live_session.send_realtime_input(audio_stream_end=True)
             return
         if message_type == "photo":
-            await self._forward_photo(message["jpeg_b64"])
+            await self._forward_photo(
+                message["jpeg_b64"],
+                trigger=message.get("trigger"),
+                tool_call_id=message.get("tool_call_id"),
+            )
             return
         if message_type == "barge_in":
             log.info("gemini live adapter barge-in session_id=%s", session.session_id)
@@ -202,21 +206,23 @@ class GeminiLiveAdapter:
         self._sender = None
 
     def _build_connect_config(self, hello: dict[str, Any]) -> Any:
+        response_modalities = tuple(
+            modality.upper() for modality in self._settings.gemini_response_modalities
+        )
+        wants_audio_output = "AUDIO" in response_modalities
         return self._live_connect_config(
-            response_modalities=list(self._settings.gemini_response_modalities),
+            response_modalities=list(response_modalities),
             session_resumption=self._session_resumption_config(handle=hello.get("session_resume")),
-            input_audio_transcription=self._audio_transcription_config(),
-            output_audio_transcription=self._audio_transcription_config(),
+            input_audio_transcription=(
+                self._audio_transcription_config() if wants_audio_output else None
+            ),
+            output_audio_transcription=(
+                self._audio_transcription_config() if wants_audio_output else None
+            ),
         )
 
     async def _forward_text(self, text: str) -> None:
-        await self._live_session.send_client_content(
-            turns={
-                "role": "user",
-                "parts": [{"text": text}],
-            },
-            turn_complete=True,
-        )
+        await self._live_session.send_realtime_input(text=text)
 
     async def _forward_audio(self, pcm_b64: str, *, sample_rate: int) -> None:
         audio_bytes = self._decode_base64(pcm_b64, field_name="pcm_b64")
@@ -224,10 +230,22 @@ class GeminiLiveAdapter:
             audio=self._blob(data=audio_bytes, mime_type=f"audio/pcm;rate={sample_rate}")
         )
 
-    async def _forward_photo(self, jpeg_b64: str) -> None:
+    async def _forward_photo(
+        self,
+        jpeg_b64: str,
+        *,
+        trigger: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> None:
         jpeg_bytes = self._decode_base64(jpeg_b64, field_name="jpeg_b64")
+        log.info(
+            "gemini live adapter forwarding photo bytes=%s trigger=%s tool_call_id=%s",
+            len(jpeg_bytes),
+            trigger,
+            tool_call_id,
+        )
         await self._live_session.send_realtime_input(
-            media=self._blob(data=jpeg_bytes, mime_type="image/jpeg")
+            video=self._blob(data=jpeg_bytes, mime_type="image/jpeg")
         )
 
     async def _pump_server_events(self, session: SessionContext) -> None:
@@ -237,17 +255,30 @@ class GeminiLiveAdapter:
             return
 
         try:
-            async for response in live_session.receive():
-                await self._handle_server_message(response, sender)
+            while not self._closing:
+                saw_response = False
+                async for response in live_session.receive():
+                    saw_response = True
+                    await self._handle_server_message(response, sender)
+
+                if self._closing:
+                    break
+                if not saw_response:
+                    log.info(
+                        "gemini live adapter receive ended without messages session_id=%s",
+                        session.session_id,
+                    )
+                    break
+                log.info(
+                    "gemini live adapter turn receive complete session_id=%s",
+                    session.session_id,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("gemini live adapter receive failed session_id=%s: %s", session.session_id, exc)
             if not self._closing:
                 await sender.emit("session_end", {"reason": "gemini_receive_error"})
-        else:
-            if not self._closing:
-                await sender.emit("session_end", {"reason": "gemini_live_closed"})
         finally:
             self._receive_task = None
 
@@ -266,6 +297,11 @@ class GeminiLiveAdapter:
         server_content = getattr(response, "server_content", None)
         if server_content is None:
             return
+        log.info(
+            "gemini live adapter server_content turn_complete=%s interrupted=%s",
+            bool(getattr(server_content, "turn_complete", False)),
+            bool(getattr(server_content, "interrupted", False)),
+        )
 
         input_transcription = getattr(server_content, "input_transcription", None)
         if input_transcription is not None and getattr(input_transcription, "text", None):
@@ -304,6 +340,8 @@ class GeminiLiveAdapter:
 
         model_turn = getattr(server_content, "model_turn", None)
         parts = getattr(model_turn, "parts", None) or []
+        if parts:
+            log.info("gemini live adapter model_turn parts=%s", len(parts))
         for part in parts:
             inline_data = getattr(part, "inline_data", None)
             if inline_data is None or getattr(inline_data, "data", None) is None:
@@ -312,6 +350,11 @@ class GeminiLiveAdapter:
             if not mime_type.startswith("audio/pcm"):
                 continue
 
+            log.info(
+                "gemini live adapter audio chunk bytes=%s mime_type=%s",
+                len(inline_data.data),
+                mime_type,
+            )
             await sender.emit(
                 "audio_chunk",
                 {

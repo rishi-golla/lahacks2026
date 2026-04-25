@@ -25,12 +25,21 @@ The default WebSocket URL is stored in `project.yml` as:
 ws://localhost:8000/session
 ```
 
-For a physical iPhone, change `BackendWebSocketURL` in `project.yml` to your Mac's LAN IP, then rerun `xcodegen`:
+For a physical iPhone, prefer entering an ngrok `wss://.../session` URL in the app's Backend WebSocket URL field. The checked-in default remains useful for simulator/local development:
 
 ```text
-ws://<your-mac-ip>:8000/session
+wss://<your-ngrok-host>/session
 ```
 
 ## Current State
 
-This is the Phase 2 scaffold. The WebSocket client, message types, UI shell, and platform shapes are present. Audio capture/playback and DAT camera integration include compile-friendly TODOs for Lucas to verify on device/hardware.
+The app is past the scaffold stage. Current behavior:
+
+- WebSocket client and protocol messages are implemented.
+- Debug UI includes backend URL entry, Mock/Real glasses toggle, DAT status, loopback, manual capture, typed send, and logs.
+- Audio loopback and Gemini audio playback work.
+- Mock glasses mode uses bundled media.
+- Real glasses mode has DAT session/photo capture code, but the real camera path still needs on-device verification.
+- Pressing `Send` currently sends text only.
+- Pressing `Capture Photo` sends a photo.
+- Automatic photo capture before vision-style prompts is the next iOS change.

@@ -12,13 +12,14 @@ struct LoopbackResult: Equatable {
     }
 }
 
+@MainActor
 final class AudioPipeline {
     let micCapture: MicCapture
     let player: PCMPlayer
 
-    init(micCapture: MicCapture = MicCapture(), player: PCMPlayer = PCMPlayer()) {
+    init(micCapture: MicCapture = MicCapture(), player: PCMPlayer? = nil) {
         self.micCapture = micCapture
-        self.player = player
+        self.player = player ?? PCMPlayer()
     }
 
     func start() async throws {

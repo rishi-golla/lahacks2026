@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
+from typing import Any
 import unittest
 
 from app.session.coordinator import SessionContext
@@ -10,9 +12,35 @@ from app.session.settings import LiveBackend, SessionSettings
 
 
 class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_text_messages_are_forwarded_as_client_content(self) -> None:
+    def test_settings_parse_comma_separated_response_modalities(self) -> None:
+        settings = SessionSettings.model_validate(
+            {
+                "live_backend": LiveBackend.GEMINI,
+                "gemini_api_key": "test-key",
+                "gemini_response_modalities": "TEXT,AUDIO",
+            }
+        )
+
+        self.assertEqual(settings.gemini_response_modalities, ("TEXT", "AUDIO"))
+
+    def test_settings_parse_plain_response_modality_from_env(self) -> None:
+        old_env = os.environ.copy()
+        try:
+            os.environ["LIVE_BACKEND"] = "gemini"
+            os.environ["GEMINI_API_KEY"] = "test-key"
+            os.environ["GEMINI_RESPONSE_MODALITIES"] = "TEXT"
+
+            settings = SessionSettings()
+
+            self.assertEqual(settings.gemini_response_modalities, ("TEXT",))
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
+    async def test_text_messages_are_forwarded_as_realtime_input(self) -> None:
         session = _FakeGeminiSession()
-        adapter = _build_adapter(session)
+        client = _FakeGenaiClient(session)
+        adapter = _build_adapter(session, client=client)
         sender = _FakeSender()
 
         await adapter.open(SessionContext(), _hello_payload(), sender)
@@ -22,19 +50,23 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
             sender,
         )
 
-        self.assertEqual(
-            session.client_content_calls,
-            [
-                (
-                    {
-                        "role": "user",
-                        "parts": [{"text": "hello gemini"}],
-                    },
-                    True,
-                )
-            ],
-        )
-        self.assertEqual(session.realtime_input_calls, [])
+        self.assertEqual(session.realtime_input_calls, [{"text": "hello gemini"}])
+        self.assertEqual(client.aio.live.connected_configs[-1].response_modalities, ["TEXT"])
+        self.assertIsNone(client.aio.live.connected_configs[-1].input_audio_transcription)
+        self.assertIsNone(client.aio.live.connected_configs[-1].output_audio_transcription)
+
+    async def test_audio_response_modality_enables_transcription_configs(self) -> None:
+        session = _FakeGeminiSession()
+        client = _FakeGenaiClient(session)
+        adapter = _build_adapter(session, client=client, response_modalities=("AUDIO",))
+        sender = _FakeSender()
+
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        config = client.aio.live.connected_configs[-1]
+        self.assertEqual(config.response_modalities, ["AUDIO"])
+        self.assertIsNotNone(config.input_audio_transcription)
+        self.assertIsNotNone(config.output_audio_transcription)
 
     async def test_audio_messages_are_forwarded_as_realtime_audio(self) -> None:
         session = _FakeGeminiSession()
@@ -69,7 +101,7 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(session.realtime_input_calls, [{"audio_stream_end": True}])
 
-    async def test_photo_messages_are_forwarded_as_realtime_media(self) -> None:
+    async def test_photo_messages_are_forwarded_as_realtime_video(self) -> None:
         session = _FakeGeminiSession()
         adapter = _build_adapter(session)
         sender = _FakeSender()
@@ -88,8 +120,8 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(session.realtime_input_calls), 1)
-        self.assertEqual(session.realtime_input_calls[0]["media"].data, b"\xff\xd8\xff")
-        self.assertEqual(session.realtime_input_calls[0]["media"].mime_type, "image/jpeg")
+        self.assertEqual(session.realtime_input_calls[0]["video"].data, b"\xff\xd8\xff")
+        self.assertEqual(session.realtime_input_calls[0]["video"].mime_type, "image/jpeg")
 
     async def test_unavailable_live_session_returns_nonfatal_error(self) -> None:
         sender = _FakeSender()
@@ -158,19 +190,24 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
                 ("transcript_out", {"text": "said this", "is_final": False}),
                 ("audio_chunk", {"pcm_b64": "AAE=", "sample_rate": 16000}),
                 ("model_interrupt", {}),
-                ("session_end", {"reason": "gemini_live_closed"}),
             ],
         )
         self.assertEqual(sender.completed_turns, 1)
 
 
-def _build_adapter(session: _FakeGeminiSession) -> GeminiLiveAdapter:
+def _build_adapter(
+    session: _FakeGeminiSession,
+    *,
+    client: _FakeGenaiClient | None = None,
+    response_modalities: tuple[str, ...] = ("TEXT",),
+) -> GeminiLiveAdapter:
     return GeminiLiveAdapter(
         SessionSettings(
-            LIVE_BACKEND=LiveBackend.GEMINI,
-            GEMINI_API_KEY="test-key",
+            live_backend=LiveBackend.GEMINI,
+            gemini_api_key="test-key",
+            gemini_response_modalities=response_modalities,
         ),
-        client_factory=lambda **_: _FakeGenaiClient(session),
+        client_factory=lambda **_: client or _FakeGenaiClient(session),
     )
 
 
@@ -204,11 +241,41 @@ class _FakeSender:
     async def complete_output_turn(self) -> None:
         self.completed_turns += 1
 
+    async def flush_pending(self) -> None:
+        return None
+
+    async def send_look_request(
+        self,
+        *,
+        tool_call_id: str,
+        reason: str,
+        timeout_ms: int | None = None,
+    ):
+        return SimpleNamespace(tool_call_id=tool_call_id, reason=reason, timeout_ms=timeout_ms)
+
+    async def send_session_update(
+        self,
+        *,
+        session_resume_token: str,
+        turn_state=None,
+        resumable: bool | None = None,
+    ) -> None:
+        await self.emit("session_update", {"session_resume_token": session_resume_token})
+
+    def record_server_event(self, *args, **kwargs):
+        return None
+
+    def fail_look_request(self, tool_call_id: str, reason: str):
+        return SimpleNamespace(tool_call_id=tool_call_id, failure_reason=reason)
+
+    def cancel_look_request(self, tool_call_id: str, reason: str = "look request cancelled"):
+        return SimpleNamespace(tool_call_id=tool_call_id, failure_reason=reason)
+
 
 class _FakeGeminiSession:
     def __init__(self, *, responses: list[object] | None = None) -> None:
-        self.client_content_calls: list[tuple[dict[str, object], bool]] = []
-        self.realtime_input_calls: list[dict[str, object]] = []
+        self.client_content_calls: list[tuple[dict[str, Any], bool]] = []
+        self.realtime_input_calls: list[dict[str, Any]] = []
         self._responses = list(responses or [])
 
     async def send_client_content(self, *, turns, turn_complete: bool = True) -> None:
@@ -218,8 +285,11 @@ class _FakeGeminiSession:
         self.realtime_input_calls.append(kwargs)
 
     async def receive(self):
-        for response in self._responses:
-            yield response
+        if not self._responses:
+            await asyncio.Event().wait()
+
+        while self._responses:
+            yield self._responses.pop(0)
 
 
 class _FakeLiveSessionManager:
@@ -239,8 +309,10 @@ class _FakeLiveSessionManager:
 class _FakeLiveAPI:
     def __init__(self, session: _FakeGeminiSession) -> None:
         self._manager = _FakeLiveSessionManager(session)
+        self.connected_configs: list[Any] = []
 
     def connect(self, *, model, config):
+        self.connected_configs.append(config)
         return self._manager
 
 

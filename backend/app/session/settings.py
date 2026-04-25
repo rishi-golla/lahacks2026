@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class LiveBackend(StrEnum):
@@ -22,17 +23,18 @@ class SessionSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     live_backend: LiveBackend = Field(default=LiveBackend.ECHO, alias="LIVE_BACKEND")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     gemini_live_model: str = Field(
-        default="gemini-live-2.5-flash-preview",
+        default="gemini-2.5-flash-native-audio-preview-12-2025",
         alias="GEMINI_LIVE_MODEL",
     )
     gemini_api_version: str = Field(default="v1alpha", alias="GEMINI_API_VERSION")
-    gemini_response_modalities: tuple[str, ...] = Field(
-        default=("TEXT",),
+    gemini_response_modalities: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=("AUDIO",),
         alias="GEMINI_RESPONSE_MODALITIES",
     )
 
