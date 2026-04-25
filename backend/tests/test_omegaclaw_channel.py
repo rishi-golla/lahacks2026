@@ -29,7 +29,7 @@ class OmegaClawChannelTests(unittest.TestCase):
         async def _run() -> dict:
             channel = BackendChannel()
             with patch(
-                "omegaclaw.runtime_loop.invoke_remote_skill",
+                "omegaclaw.runtime_loop.invoke_local_skill_shim",
                 return_value={
                     "summary": "Sarah Chen is CTO at Fetch.ai.",
                     "confidence": "high",

@@ -8,6 +8,7 @@ from typing import Any
 from .channels import my_backend
 from .protocol import make_loop_response, new_tool_call_id
 from .remote.agentverse_bridge import invoke_remote_skill
+from .skills.shims import invoke_local_skill_shim
 
 
 class OmegaClawAgentLoop:
@@ -50,7 +51,10 @@ class OmegaClawAgentLoop:
                 error="no_matching_skill",
             )
         else:
-            result = await invoke_remote_skill(skill_name=skill_name, args=args)
+            if skill_name == "identify_person":
+                result = await invoke_local_skill_shim(skill_name=skill_name, args=args)
+            else:
+                result = await invoke_remote_skill(skill_name=skill_name, args=args)
             error = result.get("error") if isinstance(result, dict) else None
             response = make_loop_response(
                 request_id=request_id,
