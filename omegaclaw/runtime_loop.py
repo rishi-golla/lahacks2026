@@ -6,11 +6,21 @@ import json
 from typing import Any
 
 from .channels import my_backend
+from .protocol import make_loop_response, new_tool_call_id
 from .remote.agentverse_bridge import invoke_remote_skill
+from .skills.shims import invoke_local_skill_shim
 
 
 class OmegaClawAgentLoop:
     """Processes channel messages through one dispatch loop."""
+
+    _KNOWN_SKILLS = {
+        "identify_person",
+        "describe_scene",
+        "google_search",
+        "google_calendar",
+        "gmail",
+    }
 
     async def run_once(self) -> bool:
         message = my_backend.getLastMessage()
@@ -18,30 +28,44 @@ class OmegaClawAgentLoop:
             return False
 
         request_id = str(message.get("request_id", ""))
+        tool_call_id = str(message.get("tool_call_id") or new_tool_call_id())
         intent = str(message.get("intent", ""))
         args = message.get("args", {})
         if not isinstance(args, dict):
             args = {}
 
-        skill_name = str(message.get("skill_name") or self._classify(intent, args))
-        if skill_name == "unknown":
+        requested_skill_name = str(message.get("skill_name") or "")
+        skill_name = requested_skill_name or self._classify(intent, args)
+        if skill_name == "unknown" or (requested_skill_name and skill_name not in self._KNOWN_SKILLS):
             result = {
                 "summary": "I don't have a matching skill for that request yet.",
                 "confidence": "low",
                 "source": "omegaclaw:no_match",
             }
-        else:
-            result = await invoke_remote_skill(skill_name=skill_name, args=args)
-
-        my_backend.send_message(
-            json.dumps(
-                {
-                    "request_id": request_id,
-                    "skill_name": skill_name,
-                    "result": result,
-                }
+            response = make_loop_response(
+                request_id=request_id,
+                tool_call_id=tool_call_id,
+                skill_name=skill_name,
+                result=result,
+                args=args,
+                error="no_matching_skill",
             )
-        )
+        else:
+            if skill_name == "identify_person":
+                result = await invoke_local_skill_shim(skill_name=skill_name, args=args)
+            else:
+                result = await invoke_remote_skill(skill_name=skill_name, args=args)
+            error = result.get("error") if isinstance(result, dict) else None
+            response = make_loop_response(
+                request_id=request_id,
+                tool_call_id=tool_call_id,
+                skill_name=skill_name,
+                result=result,
+                args=args,
+                error=str(error) if error else None,
+            )
+
+        my_backend.send_message(json.dumps(response))
         return True
 
     @staticmethod
