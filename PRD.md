@@ -74,6 +74,13 @@ Why this is strong for judging:
 - It also shows a reusable architecture instead of a one-off demo.
 - It aligns directly with the Agentverse routing and delegation story in the brief.
 
+OmegaClaw docs context incorporated into this PRD:
+
+- the docs index describes OmegaClaw docs as tutorials plus reference pages, including channels, remote Agentverse skills, and internals extension points
+- Tutorial 04 defines the intended channel-adapter pattern
+- Tutorial 06 defines the intended remote Agentverse skill pattern
+- the extension-points reference confirms that adding a channel, adding a skill, and adding a remote skill are first-class extension seams in OmegaClaw
+
 ---
 
 ## 4. VisionClaw Parity Status
@@ -264,6 +271,16 @@ To make extensibility concrete, the PRD should explicitly name future skills:
 
 Only one of these needs to be polished for the prize demo. The point is to show a reusable runtime, not a one-off badge reader.
 
+### 6.4 OmegaClaw-Core Extension Model
+
+This PRD follows the extension model documented in OmegaClaw-Core:
+
+- add a local skill by declaring it in `src/skills.metta`
+- add a remote skill by exposing a local MeTTa skill whose body delegates to the Python bridge in `src/agentverse.py`
+- add a channel by creating a Python adapter in `channels/` and wiring it into `src/channels.metta`
+
+This matters because the runtime should integrate with OmegaClaw using its intended seams rather than bypassing the agent loop with custom side paths.
+
 ---
 
 ## 7. Live Layer Assumption
@@ -294,6 +311,8 @@ This section describes the first flagship skill because the hackathon needs one 
 ### 8.2 Agent Implementation
 
 The first flagship skill is a Python uAgent on Agentverse, wrapped in FastAPI for OmegaClaw integration.
+
+OmegaClaw-Core tutorial context: remote Agentverse skills are expected to follow a simple pattern where a local MeTTa skill calls into the Python Agentverse bridge and that bridge sends the request to a fixed remote Agentverse address. This PRD adopts that same pattern for the first flagship skill.
 
 Suggested file structure:
 
@@ -402,6 +421,39 @@ If a skill can take action in the outside world:
 - fail closed on ambiguity
 - return final status, not just text
 - log confirmation state and downstream result
+
+### 9.4 Channel Adapter Integration
+
+OmegaClaw-Core tutorial and reference docs make the intended communication extension point explicit: new communication surfaces should usually be implemented as channel adapters, not as subordinate agents with their own separate reasoning loops.
+
+Authoritative OmegaClaw-Core pattern:
+
+- adapters live in `channels/`
+- MeTTa-side dispatch lives in `src/channels.metta`
+- the runtime chooses the active adapter via `commchannel`
+- each adapter exposes:
+  - `start_<name>(...)`
+  - `getLastMessage()`
+  - `send_message(str)`
+
+For this project, the glasses backend should be treated as a first-class channel when integrating into OmegaClaw's main loop. That means:
+
+- create a backend adapter module under `channels/`
+- wire it into `initChannels`, `(receive)`, and `(send $msg)` in `src/channels.metta`
+- declare any new runtime parameters with `(= (MY_*) (empty))` and bind them through `configure`
+
+This preserves one clean agentic loop and matches OmegaClaw-Core Tutorial 04 plus the channels reference.
+
+### 9.5 Remote Agentverse Skill Pattern
+
+OmegaClaw-Core Tutorial 06 documents the intended remote-skill pattern:
+
+1. OmegaClaw calls a local MeTTa skill.
+2. That skill delegates into the Python Agentverse bridge in `src/agentverse.py`.
+3. The bridge sends the request to a fixed Agentverse address.
+4. OmegaClaw receives the reply as normal tool output.
+
+This PRD adopts that exact conceptual pattern for the first flagship skill and for future remote skills.
 
 ### 9.4 Channel Adapter Integration
 
@@ -534,6 +586,7 @@ Phase 0:
 - confirm mock glasses path works
 - confirm audio initialization
 - verify current backend is still scaffold-level
+- read OmegaClaw-Core Tutorial 04, Tutorial 06, the channels reference, and the extension-points reference before locking integration design
 
 Phase 1:
 
@@ -654,17 +707,130 @@ This latency budget is for the first flagship skill, not every possible future s
 
 ---
 
-## 17. Appendix
+## 17. Build Readiness Checklist
 
-### 17.1 Useful Links
+The current PRD is strong enough to guide product direction, but the team should not assume the system will work end to end without validating the specific upstream integration points.
+
+Before implementation is considered locked, the team must verify the following:
+
+### 17.1 VisionClaw Reference Validation
+
+We are using VisionClaw as the architectural baseline, so we should confirm the exact upstream extension points rather than rely only on high-level similarities.
+
+Must verify:
+
+- which parts of VisionClaw are reusable as-is versus only inspirational
+- exact file and module layout for the live session path
+- how VisionClaw handles Gemini Live session lifecycle
+- how VisionClaw handles tool dispatch, look requests, and streamed audio
+- whether there are any repo-specific assumptions about camera, audio, or transport that our runtime must preserve
+
+Expected output of this verification:
+
+- a short mapping of "VisionClaw upstream component" -> "our runtime equivalent"
+- a list of files we intend to mirror, wrap, or replace
+
+### 17.2 OpenClaw Or OmegaClaw Integration Contract Validation
+
+The runtime should verify the exact intended extension point for the orchestration layer.
+
+Must verify:
+
+- whether the correct integration path is a custom channel adapter
+- exact adapter file location and naming convention
+- exact required adapter methods and threading or polling model
+- exact `channels.metta` hooks for `initChannels`, `receive`, and `send`
+- whether any additional registration or configuration is required for the new backend channel
+
+Expected output of this verification:
+
+- one confirmed integration contract for the backend channel adapter
+- one implementation plan for wiring the adapter into the existing agent loop
+
+### 17.3 Backend Loop Validation
+
+The repo currently contains scaffold-level backend behavior, so the team must validate the real runtime loop before building higher-level skill features.
+
+Must verify:
+
+- how the backend will open and maintain the Gemini Live session
+- how continuous mic audio is streamed from iOS to backend
+- how transcripts and audio chunks are streamed back to iOS
+- how tool calls are intercepted and routed to OmegaClaw
+- how look requests trigger fresh photo capture and return images back into the loop
+- how interruption and barge-in are handled
+
+Expected output of this verification:
+
+- one backend sequence diagram
+- one message-flow checklist covering audio in, transcripts, tool calls, look requests, and audio out
+
+### 17.4 Action Path Validation
+
+The PRD now supports real-world actions conceptually. If the product is expected to do rather than only say, the action path must be validated explicitly.
+
+Must verify:
+
+- account-linking requirements for any action-capable skill
+- confirmation and preview UX before execution
+- how execution adapters actually call downstream systems
+- what data must be logged for debugging and trust
+- what the failure and cancellation states are
+- which action skills are realistic for hackathon scope versus future scope
+
+Expected output of this verification:
+
+- one minimum viable action-skill design
+- one explicit list of what is demoable now versus what stays future-facing
+
+### 17.5 Hardware Validation
+
+The runtime should not assume that mock-glasses behavior will translate directly to real Meta glasses hardware.
+
+Must verify:
+
+- DAT still capture from paired glasses
+- optional frame access if needed by the interaction model
+- mic and speaker routing
+- audio-session stability with no echo or feedback
+- latency differences between iPhone-only and glasses-connected modes
+
+Expected output of this verification:
+
+- one hardware readiness checklist
+- one fallback plan if glasses hardware is unstable
+
+### 17.6 Build Gate
+
+Before the team says "this is ready to build," all of the following should be true:
+
+- VisionClaw reference mapping is written down
+- backend channel adapter contract is confirmed
+- backend live-loop design is confirmed
+- first flagship skill integration path is confirmed
+- action path scope is explicitly bounded
+- hardware fallback strategy is documented
+
+If any of those are missing, the correct status is "direction is good, implementation assumptions still need validation."
+
+---
+
+## 18. Appendix
+
+### 18.1 Useful Links
 
 - VisionClaw repo: https://github.com/Intent-Lab/VisionClaw
+- OmegaClaw docs index: https://github.com/asi-alliance/OmegaClaw-Core/blob/main/docs/README.md
+- OmegaClaw channel tutorial: https://github.com/asi-alliance/OmegaClaw-Core/blob/main/docs/tutorial-04-adding-a-channel.md
+- OmegaClaw remote Agentverse tutorial: https://github.com/asi-alliance/OmegaClaw-Core/blob/main/docs/tutorial-06-remote-agentverse-skills.md
+- OmegaClaw channel reference: https://github.com/asi-alliance/OmegaClaw-Core/blob/main/docs/reference-channels.md
+- OmegaClaw extension points: https://github.com/asi-alliance/OmegaClaw-Core/blob/main/docs/reference-internals-extension-points.md
 - Agentverse: https://agentverse.ai
 - Fetch.ai docs: https://fetch.ai/docs
 - Gemini Live API: https://ai.google.dev/gemini-api/docs/live
 - Meta DAT SDK: https://developers.facebook.com/docs/ray-ban-meta-smart-glasses
 
-### 17.2 Key Principle
+### 18.2 Key Principle
 
 If the team ever has to choose between:
 
