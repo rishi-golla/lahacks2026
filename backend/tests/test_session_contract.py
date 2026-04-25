@@ -116,6 +116,66 @@ class SessionContractTests(unittest.TestCase):
                 },
             )
 
+    def test_adapter_output_events_are_mapped_back_through_wire_contract(self) -> None:
+        adapter = _MappedEventAdapter()
+        with _session_socket(adapter=adapter) as websocket:
+            websocket.send_json(_hello_payload(session_resume="resume-from-client"))
+
+            ready = websocket.receive_json()
+            self.assertEqual(ready["type"], "ready")
+
+            self.assertEqual(
+                websocket.receive_json(),
+                {
+                    "type": "session_update",
+                    "session_resume_token": "resume-from-gemini",
+                },
+            )
+
+            websocket.send_json({"type": "text", "text": "hello backend"})
+
+            self.assertEqual(
+                websocket.receive_json(),
+                {
+                    "type": "transcript_in",
+                    "text": "hello backend",
+                    "is_final": True,
+                    "ts_ms": 111,
+                },
+            )
+            self.assertEqual(
+                websocket.receive_json(),
+                {
+                    "type": "transcript_out",
+                    "text": "hello from gemini",
+                    "turn_id": "turn-0001",
+                    "is_final": False,
+                },
+            )
+            self.assertEqual(
+                websocket.receive_json(),
+                {
+                    "type": "audio_chunk",
+                    "pcm_b64": "AAE=",
+                    "sample_rate": 24000,
+                    "turn_id": "turn-0001",
+                },
+            )
+            self.assertEqual(
+                websocket.receive_json(),
+                {
+                    "type": "model_interrupt",
+                    "turn_id": "turn-0001",
+                },
+            )
+            self.assertEqual(
+                websocket.receive_json(),
+                {
+                    "type": "session_end",
+                    "reason": "gemini_closed",
+                },
+            )
+
 
 def _hello_payload(*, session_resume: str | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
@@ -135,8 +195,8 @@ def _hello_payload(*, session_resume: str | None = None) -> dict[str, object]:
     return payload
 
 
-def _session_socket():
-    adapter = _EchoAdapter()
+def _session_socket(adapter=None):
+    adapter = adapter or _EchoAdapter()
     patcher = patch.object(SessionCoordinator, "_build_default_live_adapter", return_value=adapter)
     patcher.start()
     client = TestClient(app)
@@ -159,11 +219,35 @@ def _session_socket():
 class _EchoAdapter:
     model_name = "echo"
 
-    async def open(self, session, hello) -> None:
+    async def open(self, session, hello, sender) -> None:
         return None
 
     async def handle_client_message(self, session, message, sender) -> None:
         await sender.send({"type": "echo", "received": message})
+
+    async def close(self, session) -> None:
+        return None
+
+
+class _MappedEventAdapter:
+    model_name = "gemini-live"
+
+    async def open(self, session, hello, sender) -> None:
+        await sender.emit("session_update", {"session_resume_token": "resume-from-gemini"})
+
+    async def handle_client_message(self, session, message, sender) -> None:
+        await sender.emit(
+            "transcript_in",
+            {
+                "text": message["text"],
+                "is_final": True,
+                "ts_ms": 111,
+            },
+        )
+        await sender.emit("transcript_out", {"text": "hello from gemini"})
+        await sender.emit("audio_chunk", {"pcm_b64": "AAE=", "sample_rate": 24000})
+        await sender.emit("model_interrupt", {})
+        await sender.emit("session_end", {"reason": "gemini_closed"})
 
     async def close(self, session) -> None:
         return None

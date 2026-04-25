@@ -14,9 +14,12 @@ FastAPI backend  (backend/)
   │  BackendChannel.submit(GlassesTask)
   ▼
 OmegaClaw  (omegaclaw/)
-  ├── channels/backend_channel.py   ← Tutorial 04: channel adapter
+  ├── channels/my_backend.py        ← Tutorial 04: channel contract adapter
+  ├── channels/backend_channel.py   ← backend-facing submit wrapper
+  ├── src/channels.metta            ← initChannels/receive/send wiring
+  ├── runtime_loop.py               ← single-loop dispatch
   ├── skills/shims.py               ← local dev dispatch (no gateway needed)
-  ├── remote/agentverse_bridge.py   ← Tutorial 06: remote Agentverse uAgent
+  ├── remote/agentverse_bridge.py   ← Tutorial 06: remote Agentverse dispatch
   └── protocol.py                   ← tool_event formatting for iOS
   │
   ▼
@@ -27,7 +30,8 @@ Agentverse uAgents  (specialist skills)
 
 | OmegaClaw concept | Tutorial | File in this repo |
 |---|---|---|
-| Channel adapter | Tutorial 04 — Channels | `channels/backend_channel.py` |
+| Channel adapter contract | Tutorial 04 — Channels | `channels/my_backend.py` |
+| Channel MeTTa wiring | Tutorial 04 — Channels | `src/channels.metta` |
 | Remote uAgent bridge | Tutorial 06 — Remote agents | `remote/agentverse_bridge.py` |
 
 ---

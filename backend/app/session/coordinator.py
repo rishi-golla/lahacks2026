@@ -7,7 +7,8 @@ tool-routing work.
 
 from __future__ import annotations
 
-from dataclasses import asdict
+import asyncio
+from dataclasses import asdict, replace
 import json
 import logging
 import time
@@ -17,13 +18,18 @@ from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from .event_mapper import EventMapperState, complete_output_turn, map_server_event
+from .look_loop import LookLoop, LookRequest, UnknownLookRequestError
 from .protocol import (
     ClientMessage,
     HelloMessage,
+    PhotoFrame,
+    PhotoTrigger,
     ProtocolError,
     error_payload,
     parse_client_message,
 )
+from .resume_store import InMemoryResumeStore, RestoreOutcome, TurnStateSnapshot
 from .state import SessionLifecycleState, StateTransitionError
 
 log = logging.getLogger(__name__)
@@ -34,7 +40,12 @@ class LiveAdapter(Protocol):
 
     model_name: str
 
-    async def open(self, session: "SessionContext", hello: dict[str, Any]) -> None:
+    async def open(
+        self,
+        session: "SessionContext",
+        hello: dict[str, Any],
+        sender: "SessionSender",
+    ) -> None:
         """Initialize the live runtime for a newly negotiated session."""
 
     async def handle_client_message(
@@ -79,6 +90,50 @@ class SessionSender(Protocol):
     async def send(self, payload: dict[str, Any]) -> None:
         """Send a server message to the websocket client."""
 
+    async def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
+        """Map a backend event onto the wire contract and send it."""
+
+    async def complete_output_turn(self) -> None:
+        """Advance mapper state after a model turn ends without a wire message."""
+
+    async def send_look_request(
+        self,
+        *,
+        tool_call_id: str,
+        reason: str,
+        timeout_ms: int | None = None,
+    ) -> LookRequest:
+        """Track and emit a tool-driven look request."""
+
+    async def send_session_update(
+        self,
+        *,
+        session_resume_token: str,
+        turn_state: TurnStateSnapshot | None = None,
+        resumable: bool | None = None,
+    ) -> None:
+        """Publish a new session resume token and persist it."""
+
+    def record_server_event(
+        self,
+        event_type: str,
+        *,
+        phase: str | None = None,
+        turn_id: str | None = None,
+        response_id: str | None = None,
+        resumable: bool | None = None,
+    ) -> TurnStateSnapshot:
+        """Record server-side state used for resumability snapshots."""
+
+    def fail_look_request(self, tool_call_id: str, reason: str) -> LookRequest:
+        """Resolve a pending look request as failed."""
+
+    def cancel_look_request(self, tool_call_id: str, reason: str = "look request cancelled") -> LookRequest:
+        """Resolve a pending look request as cancelled."""
+
+    async def flush_pending(self) -> None:
+        """Flush any buffered outbound events once the session is ready."""
+
 
 @dataclass(slots=True)
 class SessionContext:
@@ -86,6 +141,11 @@ class SessionContext:
     resume_token: str = field(default_factory=lambda: f"resume-{uuid4().hex}")
     resumed: bool = False
     lifecycle_state: SessionLifecycleState = field(default_factory=SessionLifecycleState)
+    look_loop: LookLoop = field(default_factory=LookLoop)
+    turn_state: TurnStateSnapshot = field(
+        default_factory=lambda: TurnStateSnapshot(phase="awaiting_hello")
+    )
+    restore_outcome: RestoreOutcome | None = None
 
 
 class NullLiveAdapter:
@@ -93,7 +153,12 @@ class NullLiveAdapter:
 
     model_name = "coordinator-stub"
 
-    async def open(self, session: SessionContext, hello: dict[str, Any]) -> None:
+    async def open(
+        self,
+        session: SessionContext,
+        hello: dict[str, Any],
+        sender: SessionSender,
+    ) -> None:
         log.info(
             "session live adapter open session_id=%s client=%s",
             session.session_id,
@@ -151,11 +216,120 @@ class NullToolRouter:
 
 
 class WebSocketSessionSender:
-    def __init__(self, ws: WebSocket) -> None:
+    def __init__(
+        self,
+        ws: WebSocket,
+        *,
+        session: SessionContext,
+        coordinator: "SessionCoordinator",
+    ) -> None:
         self._ws = ws
+        self._session = session
+        self._coordinator = coordinator
+        self._mapper_state = EventMapperState()
+        self._send_lock = asyncio.Lock()
+        self._pending_payloads: list[dict[str, Any]] = []
+        self._ready_for_events = False
 
     async def send(self, payload: dict[str, Any]) -> None:
-        await self._ws.send_text(json.dumps(payload))
+        async with self._send_lock:
+            await self._ws.send_text(json.dumps(payload))
+
+    async def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
+        mapped_payload, next_state = map_server_event(event_type, payload, self._mapper_state)
+        self._mapper_state = next_state
+        if not self._ready_for_events:
+            self._pending_payloads.append(mapped_payload)
+            return
+        await self.send(mapped_payload)
+
+    async def complete_output_turn(self) -> None:
+        self._mapper_state = complete_output_turn(self._mapper_state)
+
+    async def send_look_request(
+        self,
+        *,
+        tool_call_id: str,
+        reason: str,
+        timeout_ms: int | None = None,
+    ) -> LookRequest:
+        request = self._session.look_loop.create_request(
+            tool_call_id=tool_call_id,
+            reason=reason,
+            requested_at_ms=self._coordinator._timestamp_ms(),
+            timeout_ms=timeout_ms,
+        )
+        self._coordinator._update_turn_state(
+            self._session,
+            phase="waiting_for_tool_look",
+            last_server_event_type="look_request",
+        )
+        self._coordinator._persist_resume_state(self._session, resumable=False)
+        await self.emit("look_request", request.to_client_payload())
+        return request
+
+    async def send_session_update(
+        self,
+        *,
+        session_resume_token: str,
+        turn_state: TurnStateSnapshot | None = None,
+        resumable: bool | None = None,
+    ) -> None:
+        self._session.resume_token = session_resume_token
+        if turn_state is not None:
+            self._session.turn_state = turn_state
+        self._coordinator._persist_resume_state(self._session, resumable=resumable)
+        await self.emit(
+            "session_update",
+            {"session_resume_token": self._session.resume_token},
+        )
+
+    def record_server_event(
+        self,
+        event_type: str,
+        *,
+        phase: str | None = None,
+        turn_id: str | None = None,
+        response_id: str | None = None,
+        resumable: bool | None = None,
+    ) -> TurnStateSnapshot:
+        turn_state = self._coordinator._update_turn_state(
+            self._session,
+            phase=phase,
+            turn_id=turn_id,
+            response_id=response_id,
+            last_server_event_type=event_type,
+        )
+        self._coordinator._persist_resume_state(self._session, resumable=resumable)
+        return turn_state
+
+    def fail_look_request(self, tool_call_id: str, reason: str) -> LookRequest:
+        request = self._session.look_loop.fail_request(tool_call_id, reason)
+        self._coordinator._update_turn_state(
+            self._session,
+            phase="ready",
+            last_server_event_type="look_request_failed",
+        )
+        self._coordinator._persist_resume_state(self._session)
+        return request
+
+    def cancel_look_request(self, tool_call_id: str, reason: str = "look request cancelled") -> LookRequest:
+        request = self._session.look_loop.cancel_request(tool_call_id, reason)
+        self._coordinator._update_turn_state(
+            self._session,
+            phase="ready",
+            last_server_event_type="look_request_cancelled",
+        )
+        self._coordinator._persist_resume_state(self._session)
+        return request
+
+    async def flush_pending(self) -> None:
+        self._ready_for_events = True
+        while self._pending_payloads:
+            await self.send(self._pending_payloads.pop(0))
+
+
+_DEFAULT_RESUME_STORE = InMemoryResumeStore()
 
 
 class SessionCoordinator:
@@ -167,16 +341,18 @@ class SessionCoordinator:
         live_adapter: LiveAdapter | None = None,
         state_backend: SessionStateBackend | None = None,
         tool_router: ToolRouter | None = None,
+        resume_store: InMemoryResumeStore | None = None,
     ) -> None:
         self._live_adapter = live_adapter or self._build_default_live_adapter()
         self._state_backend = state_backend or InMemorySessionStateBackend()
         self._tool_router = tool_router or NullToolRouter()
+        self._resume_store = resume_store or _DEFAULT_RESUME_STORE
 
     async def run(self, ws: WebSocket) -> None:
         await ws.accept()
         client = self._client_label(ws)
         session = SessionContext()
-        sender = WebSocketSessionSender(ws)
+        sender = WebSocketSessionSender(ws, session=session, coordinator=self)
         disconnect_reason = "client_disconnect"
 
         log.info("session connected session_id=%s client=%s", session.session_id, client)
@@ -185,6 +361,7 @@ class SessionCoordinator:
 
         try:
             while True:
+                self._expire_pending_look_requests(session)
                 raw = await ws.receive_text()
                 try:
                     message = parse_client_message(raw)
@@ -206,6 +383,12 @@ class SessionCoordinator:
         finally:
             await self._tool_router.close(session)
             await self._live_adapter.close(session)
+            if self._resume_store.get(session.session_id) is not None:
+                self._resume_store.mark_disconnected(
+                    session.session_id,
+                    turn_state=session.turn_state,
+                    resumable=self._is_resumable(session),
+                )
             await self._state_backend.on_disconnected(session, disconnect_reason)
 
     async def _handle_message(
@@ -230,7 +413,26 @@ class SessionCoordinator:
             await self._handle_hello(session, message, sender)
             return
 
+        if isinstance(message, PhotoFrame) and message.trigger is PhotoTrigger.TOOL_LOOK:
+            try:
+                resolved = session.look_loop.complete_request(message)
+            except (UnknownLookRequestError, ValueError) as exc:
+                await self._send_error(
+                    sender,
+                    "protocol_violation",
+                    str(exc),
+                    details={"type": "photo", "tool_call_id": message.tool_call_id},
+                )
+                return
+            message_payload["look_request"] = self._serialize_look_request(resolved)
+
+        self._update_turn_state(
+            session,
+            phase=self._phase_for_lifecycle(session),
+            last_client_message_type=message_type,
+        )
         await self._state_backend.on_client_message(session, message_payload)
+        self._persist_resume_state(session)
 
         if message_type == "ping":
             await sender.send(
@@ -251,10 +453,15 @@ class SessionCoordinator:
         sender: SessionSender,
     ) -> None:
         hello_payload = asdict(hello)
-        session.resumed = bool(hello.session_resume)
+        self._restore_session_from_hello(session, hello)
+        hello_payload["resume_restore_outcome"] = (
+            session.restore_outcome.value if session.restore_outcome is not None else None
+        )
 
         await self._state_backend.on_hello(session, hello_payload)
-        await self._live_adapter.open(session, hello_payload)
+        await self._open_live_adapter(session, hello_payload, sender)
+        self._update_turn_state(session, phase=self._phase_for_lifecycle(session))
+        self._persist_resume_state(session)
 
         await sender.send(
             {
@@ -265,6 +472,7 @@ class SessionCoordinator:
                 "model": self._live_adapter.model_name,
             }
         )
+        await sender.flush_pending()
 
     @staticmethod
     def _build_default_live_adapter() -> LiveAdapter:
@@ -289,5 +497,114 @@ class SessionCoordinator:
         message: str,
         *,
         fatal: bool | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
-        await sender.send(error_payload(code, message, fatal=fatal))
+        await sender.send(error_payload(code, message, fatal=fatal, details=details))
+
+    def _restore_session_from_hello(self, session: SessionContext, hello: HelloMessage) -> None:
+        requested_token = hello.session_resume
+        if not requested_token:
+            session.resumed = False
+            session.restore_outcome = RestoreOutcome.UNKNOWN
+            return
+
+        session.resumed = True
+        restored = self._resume_store.restore(requested_token)
+        session.restore_outcome = restored.outcome
+        if restored.outcome is not RestoreOutcome.RESTORED or restored.session is None:
+            return
+
+        record = restored.session
+        session.session_id = record.session_id
+        session.resume_token = record.resume_token
+        session.turn_state = record.turn_state
+
+    async def _open_live_adapter(
+        self,
+        session: SessionContext,
+        hello_payload: dict[str, Any],
+        sender: SessionSender,
+    ) -> None:
+        try:
+            await self._live_adapter.open(session, hello_payload, sender)
+        except TypeError:
+            await self._live_adapter.open(session, hello_payload)
+
+    def _persist_resume_state(
+        self,
+        session: SessionContext,
+        *,
+        resumable: bool | None = None,
+    ) -> None:
+        self._resume_store.upsert_session(
+            session.session_id,
+            session.resume_token,
+            turn_state=session.turn_state,
+            resumable=self._is_resumable(session) if resumable is None else resumable,
+        )
+
+    def _update_turn_state(
+        self,
+        session: SessionContext,
+        *,
+        phase: str | None = None,
+        turn_id: str | None = None,
+        response_id: str | None = None,
+        last_client_message_type: str | None = None,
+        last_server_event_type: str | None = None,
+    ) -> TurnStateSnapshot:
+        current = session.turn_state
+        session.turn_state = replace(
+            current,
+            phase=current.phase if phase is None else phase,
+            turn_id=current.turn_id if turn_id is None else turn_id,
+            response_id=current.response_id if response_id is None else response_id,
+            last_client_message_type=(
+                current.last_client_message_type
+                if last_client_message_type is None
+                else last_client_message_type
+            ),
+            last_server_event_type=(
+                current.last_server_event_type
+                if last_server_event_type is None
+                else last_server_event_type
+            ),
+        )
+        return session.turn_state
+
+    def _expire_pending_look_requests(self, session: SessionContext) -> None:
+        expired = session.look_loop.expire_requests(now_ms=self._timestamp_ms())
+        if not expired:
+            return
+        self._update_turn_state(
+            session,
+            phase="ready",
+            last_server_event_type="look_request_timed_out",
+        )
+        self._persist_resume_state(session)
+
+    @staticmethod
+    def _serialize_look_request(request: LookRequest) -> dict[str, Any]:
+        return {
+            "tool_call_id": request.tool_call_id,
+            "reason": request.reason,
+            "requested_at_ms": request.requested_at_ms,
+            "timeout_ms": request.timeout_ms,
+            "deadline_ms": request.deadline_ms,
+            "state": request.state.value,
+            "photo_ts_ms": request.photo_ts_ms,
+            "failure_reason": request.failure_reason,
+        }
+
+    @staticmethod
+    def _phase_for_lifecycle(session: SessionContext) -> str:
+        if session.look_loop.pending_tool_call_ids():
+            return "waiting_for_tool_look"
+        return str(session.lifecycle_state.phase)
+
+    @staticmethod
+    def _is_resumable(session: SessionContext) -> bool:
+        return (
+            not session.look_loop.pending_tool_call_ids()
+            and str(session.lifecycle_state.phase) == "ready"
+        )

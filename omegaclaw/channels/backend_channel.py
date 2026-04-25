@@ -1,9 +1,15 @@
-# OmegaClaw channel adapter for the MetaGlasses backend.
-# Receives task context from the FastAPI session coordinator and routes
-# to OmegaClaw's main agent loop.
+"""OmegaClaw backend channel entrypoint used by backend session code."""
 
+from __future__ import annotations
+
+import asyncio
+import os
 from dataclasses import dataclass
 from typing import Any
+
+from omegaclaw.channels import my_backend
+from omegaclaw.runtime_loop import OmegaClawAgentLoop
+
 
 @dataclass
 class GlassesTask:
@@ -14,21 +20,47 @@ class GlassesTask:
     args: dict[str, Any] # extracted args (name, org, title, etc.)
     image_b64: str | None = None  # JPEG if a photo was taken
 
+    def to_channel_message(self) -> dict[str, Any]:
+        payload = {
+            "session_id": self.session_id,
+            "turn_id": self.turn_id,
+            "intent": self.intent,
+            "tool_call_id": self.tool_call_id,
+            "args": self.args,
+            "skill_name": self.args.get("skill_name"),
+        }
+        if self.image_b64 is not None:
+            payload["image_b64"] = self.image_b64
+        return payload
+
 class BackendChannel:
-    """Receives GlassesTask from the session coordinator and dispatches to OmegaClaw."""
+    """Receives GlassesTask from session coordinator and dispatches via channel loop."""
+
+    def __init__(self) -> None:
+        self._loop = OmegaClawAgentLoop()
+        self._request_timeout_s = float(os.environ.get("OMEGACLAW_REQUEST_TIMEOUT_S", "8.0"))
 
     async def submit(self, task: GlassesTask) -> dict[str, Any]:
-        """
-        Route the task to OmegaClaw and return the result dict.
-        In production: calls the OmegaClaw gateway endpoint.
-        In stub mode (no OMEGACLAW_URL env): dispatches directly to local skill shims.
-        """
-        import os
+        """Route a task to OmegaClaw and return normalized skill output."""
         omegaclaw_url = os.environ.get("OMEGACLAW_URL")
         if omegaclaw_url:
             return await self._call_omegaclaw(omegaclaw_url, task)
-        else:
-            return await self._local_shim(task)
+        return await self._dispatch_via_channel_loop(task)
+
+    async def _dispatch_via_channel_loop(self, task: GlassesTask) -> dict[str, Any]:
+        my_backend.start_my_backend(
+            backend_url=os.environ.get("BACKEND_CHANNEL_URL", ""),
+            auth_secret=os.environ.get("BACKEND_CHANNEL_SECRET"),
+            poll_interval_ms=int(os.environ.get("BACKEND_CHANNEL_POLL_MS", "50")),
+        )
+        _request_id, pending = my_backend.enqueue_message(task.to_channel_message())
+        # One clean OmegaClaw loop handles intake + remote dispatch.
+        await self._loop.run_once()
+        response = await asyncio.wait_for(pending, timeout=self._request_timeout_s)
+        result = response.get("result")
+        if isinstance(result, dict):
+            return result
+        return {"summary": "Invalid channel response", "confidence": "low", "source": "omegaclaw:channel"}
 
     async def _call_omegaclaw(self, url: str, task: GlassesTask) -> dict[str, Any]:
         import httpx
@@ -40,7 +72,3 @@ class BackendChannel:
             resp.raise_for_status()
             data = resp.json()
             return {"summary": data["choices"][0]["message"]["content"], "confidence": "high", "source": "omegaclaw"}
-
-    async def _local_shim(self, task: GlassesTask) -> dict[str, Any]:
-        from omegaclaw.skills.shims import dispatch_skill
-        return await dispatch_skill(task)
