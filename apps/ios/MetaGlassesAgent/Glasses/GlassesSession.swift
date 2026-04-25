@@ -25,5 +25,27 @@ enum GlassesSessionError: Error, Equatable {
     case streamSessionUnavailable
     case photoCaptureRejected
     case photoCaptureTimedOut
+    case cameraPermissionDenied
     case notImplemented
+}
+
+extension GlassesSessionError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .photoEncodingFailed:
+            return "Could not encode photo JPEG."
+        case .deviceSessionUnavailable:
+            return "Could not start a glasses device session."
+        case .streamSessionUnavailable:
+            return "Could not start a glasses camera stream."
+        case .photoCaptureRejected:
+            return "The glasses camera rejected the photo capture request."
+        case .photoCaptureTimedOut:
+            return "Timed out waiting for a glasses photo."
+        case .cameraPermissionDenied:
+            return "Camera permission is not granted for the glasses."
+        case .notImplemented:
+            return "This glasses feature is not implemented yet."
+        }
+    }
 }

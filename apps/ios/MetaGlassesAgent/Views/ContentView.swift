@@ -27,6 +27,26 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Glasses", selection: $viewModel.glassesMode) {
+                        ForEach(GlassesMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: viewModel.glassesMode) { _ in
+                        Task {
+                            await viewModel.applyGlassesMode()
+                        }
+                    }
+
+                    if !viewModel.glassesModeMessage.isEmpty {
+                        Text(viewModel.glassesModeMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 HStack {
                     TextField("Debug text", text: $viewModel.debugText)
                         .textFieldStyle(.roundedBorder)

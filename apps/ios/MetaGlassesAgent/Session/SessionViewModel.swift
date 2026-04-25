@@ -1,20 +1,41 @@
 import Combine
 import Foundation
 
+enum GlassesMode: String, CaseIterable, Identifiable {
+    case mock
+    case real
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .mock:
+            return "Mock"
+        case .real:
+            return "Real Glasses"
+        }
+    }
+}
+
 @MainActor
 final class SessionViewModel: ObservableObject {
     @Published var debugText = "hello from iOS"
     @Published var backendURLText: String
     @Published var backendURLMessage = ""
+    @Published var glassesMode: GlassesMode
+    @Published var glassesModeMessage = ""
     @Published var coordinator: SessionCoordinator
 
     private static let backendURLOverrideKey = "BackendWebSocketURLOverride"
+    private static let glassesModeKey = "GlassesMode"
     private var coordinatorCancellable: AnyCancellable?
 
     init() {
         let url = Self.backendURL()
+        let mode = Self.savedGlassesMode()
         self.backendURLText = url.absoluteString
-        self.coordinator = SessionCoordinator(glasses: MockGlassesSession(), backendURL: url)
+        self.glassesMode = mode
+        self.coordinator = SessionCoordinator(glasses: Self.makeGlassesSession(mode: mode), backendURL: url)
         observeCoordinator()
     }
 
@@ -33,9 +54,27 @@ final class SessionViewModel: ObservableObject {
         }
 
         UserDefaults.standard.set(trimmed, forKey: Self.backendURLOverrideKey)
-        coordinator = SessionCoordinator(glasses: MockGlassesSession(), backendURL: url)
+        rebuildCoordinator(backendURL: url)
         observeCoordinator()
         backendURLMessage = "Backend URL saved"
+    }
+
+    func applyGlassesMode() async {
+        if coordinator.status == .live || coordinator.status == .connecting {
+            await coordinator.stop()
+        }
+
+        UserDefaults.standard.set(glassesMode.rawValue, forKey: Self.glassesModeKey)
+        rebuildCoordinator(backendURL: Self.backendURL())
+        observeCoordinator()
+        glassesModeMessage = "Using \(glassesMode.label)"
+    }
+
+    private func rebuildCoordinator(backendURL: URL) {
+        coordinator = SessionCoordinator(
+            glasses: Self.makeGlassesSession(mode: glassesMode),
+            backendURL: backendURL
+        )
     }
 
     private func observeCoordinator() {
@@ -58,5 +97,23 @@ final class SessionViewModel: ObservableObject {
         }
 
         return URL(string: "ws://localhost:8000/session")!
+    }
+
+    private static func savedGlassesMode() -> GlassesMode {
+        if let rawValue = UserDefaults.standard.string(forKey: glassesModeKey),
+           let mode = GlassesMode(rawValue: rawValue) {
+            return mode
+        }
+
+        return .mock
+    }
+
+    private static func makeGlassesSession(mode: GlassesMode) -> GlassesSession {
+        switch mode {
+        case .mock:
+            return MockGlassesSession()
+        case .real:
+            return DATGlassesSession()
+        }
     }
 }
