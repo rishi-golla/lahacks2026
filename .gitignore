@@ -25,3 +25,6 @@ DerivedData/
 # Editor
 .vscode/
 .idea/
+
+# External repos (for documentation)
+external-repos/

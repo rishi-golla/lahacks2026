@@ -1,0 +1,63 @@
+name: MetaGlassesAgent
+options:
+  bundleIdPrefix: com.lahacks
+  deploymentTarget:
+    iOS: "16.0"
+
+packages:
+  MetaWearablesDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    from: 0.6.0
+
+targets:
+  MetaGlassesAgent:
+    type: application
+    platform: iOS
+    sources:
+      - path: MetaGlassesAgent
+    resources:
+      - path: MetaGlassesAgent/Resources
+    dependencies:
+      - package: MetaWearablesDAT
+        product: MWDATCore
+      - package: MetaWearablesDAT
+        product: MWDATCamera
+      - package: MetaWearablesDAT
+        product: MWDATMockDevice
+    info:
+      path: MetaGlassesAgent/Info.plist
+      properties:
+        CFBundleDisplayName: MetaGlassesAgent
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSMicrophoneUsageDescription: Used to talk to the assistant.
+        NSCameraUsageDescription: Used to capture photos from your glasses.
+        NSBluetoothAlwaysUsageDescription: Used to connect to your Meta glasses.
+        NSLocalNetworkUsageDescription: Used to connect to the local development backend.
+        UIBackgroundModes: [bluetooth-peripheral, external-accessory, audio]
+        UISupportedExternalAccessoryProtocols: [com.meta.ar.wearable]
+        LSApplicationQueriesSchemes: [fb-viewapp]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        BackendWebSocketURL: ws://localhost:8000/session
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleURLSchemes: [metaglassesagent]
+        MWDAT:
+          AppLinkURLScheme: metaglassesagent://
+          MetaAppID: "0"
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: ""
+        PRODUCT_BUNDLE_IDENTIFIER: com.lahacks.MetaGlassesAgent
+
+  MetaGlassesAgentTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: MetaGlassesAgentTests
+    dependencies:
+      - target: MetaGlassesAgent
