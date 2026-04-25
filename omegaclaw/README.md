@@ -45,12 +45,25 @@ Agentverse uAgents  (specialist skills)
 | `AGENTVERSE_SKILL_URL` | `http://localhost:8001` | Agentverse skill endpoint used by the remote bridge. |
 | `SKILL_TIMEOUT_S` | `5.0` | Per-attempt HTTP timeout for skill calls (seconds). |
 | `SKILL_MAX_RETRIES` | `2` | Number of retry attempts on timeout. |
+| `BACKEND_CHANNEL_URL` | _(unset)_ | Runtime param passed to `start_my_backend(...)`. |
+| `BACKEND_CHANNEL_SECRET` | _(unset)_ | Optional channel auth/runtime secret. |
+| `BACKEND_CHANNEL_POLL_MS` | `50` | Channel polling cadence parameter. |
+| `OMEGACLAW_REQUEST_TIMEOUT_S` | `8.0` | Await timeout for channel-loop response resolution. |
+
+---
+
+## Runbook
+
+Detailed setup and integration notes live in:
+
+- `docs/omegaclaw_backend_channel_runbook.md`
+- `docs/omegaclaw_touchpoints.md`
 
 ---
 
 ## Local developer setup (no OmegaClaw gateway)
 
-When `OMEGACLAW_URL` is **not set**, `BackendChannel.submit()` falls through to the local shim dispatcher in `skills/shims.py`. This lets you develop and test end-to-end without a running OmegaClaw gateway.
+When `OMEGACLAW_URL` is **not set**, `BackendChannel.submit()` uses the local channel-loop path (`my_backend` + `OmegaClawAgentLoop`) and dispatches via `remote/agentverse_bridge.py`.
 
 1. Clone the repo and install backend dependencies:
    ```bash
@@ -63,9 +76,9 @@ When `OMEGACLAW_URL` is **not set**, `BackendChannel.submit()` falls through to 
    uv run uvicorn main:app --reload --port 8000
    ```
 
-3. (Optional) Start a mock Agentverse skill service on port 8001, or leave it down — the shims return graceful error summaries if the service is unreachable.
+3. Start an Agentverse skill service on port 8001 (or configure `AGENTVERSE_SKILL_URL` to your remote deployment).
 
-4. Connect the iOS app. All `GlassesTask` objects will be dispatched through `_local_shim` automatically.
+4. Connect the iOS app. `GlassesTask` requests are dispatched through the channel loop and returned through one backend session flow.
 
 ---
 
