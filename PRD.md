@@ -1,289 +1,539 @@
-# Product Requirements Document
-## MetaGlasses × OmegaClaw — Agentic AR Assistant
-**Version:** 0.1 (Hackathon Draft)  
-**Date:** April 2026  
-**Team Size:** 4 engineers  
-**Time Budget:** 20 hours  
-**Status:** In Scoping
+# ContextLens
+## Visual Person Intelligence for Meta Ray-Ban Glasses
+
+**OmegaClaw Skill Forge · Powered by Agentverse · Fetch.ai Prize Track**  
+Version 1.0 | April 2026 | Team: 4 Engineers | Budget: 20 Hours
 
 ---
 
 ## 1. Executive Summary
 
-This project connects **OmegaClaw** (the agentic tool execution layer from Fetch.ai's uAgent ecosystem) to **Meta smart glasses** to create a hands-free AI assistant that can see, listen, and act. The user puts on their glasses, taps the AI button, and speaks a natural language request. A high-quality orchestration model (TBD) routes the request to either a **Gemini Live** vision/speech module or to **OmegaClaw** for real-world task execution via connected apps. Sub-agent tasks (parsing, formatting, confirmation) are handled by **Gemma** models running locally or on-device.
+ContextLens is a specialist OmegaClaw skill powered by a custom Agentverse uAgent that gives Meta Ray-Ban glasses the ability to identify people from their name badges and speak back contextual intelligence about them in real time.
 
-The primary demo scenario is a **multi-step agentic workflow**: the user speaks a request, the orchestrator decomposes it, delegates subtasks to OmegaClaw agents, and speaks a synthesized result back — all within a few seconds, hands-free.
+The user looks at someone wearing a name badge at a conference or hackathon, taps the AI button, and says 'Who is this?' The glasses camera captures a JPEG frame, Gemini extracts the name and organization via vision, and the request is routed through OmegaClaw to our registered Agentverse agent. The agent queries web and professional data sources, composes a 2-sentence context summary, and speaks it back through the glasses speaker within 5 seconds. No phone, no typing, no breaking conversation.
+
+This project has two deliverables with equal weight: (1) the Agentverse uAgent + OmegaClaw skill registration, which is the prize track submission, and (2) the Meta glasses AR demo, which is the proof it works in a real context. The glasses app is built on the VisionClaw open-source repo (Intent-Lab/VisionClaw) to avoid rebuilding solved infrastructure.
+
+Why this wins the Fetch.ai prize track: it builds a genuinely new specialist skill that does not exist in OmegaClaw's current 56+ library, it uses the Agentverse agent registration flow exactly as the brief requires, and the AR demo makes the value proposition immediately obvious to any judge in under 10 seconds.
 
 ---
 
-## 2. Goals & Success Criteria
+## 2. Prize Track Alignment
 
-| Goal | Success Criteria |
-|------|-----------------|
-| End-to-end voice → action loop | User speaks a request; result is executed and spoken back within ~5 seconds |
-| Multi-step orchestration (P0) | At least one demo showing a 2-step agentic chain (e.g., search → summarize → speak) |
-| Vision awareness (P1) | "What am I looking at?" returns an accurate scene description via Gemini |
-| Real-world task delegation (P1) | At least 2 OmegaClaw integrations working (e.g., web search + calendar) |
-| Hackathon demo-readiness | Stable enough for a 3-minute live demo; graceful failure modes |
+Prize: OmegaClaw Skill Forge powered by Agentverse. 1st: $1,500 / 2nd: $1,000.
+
+Requirement: Build a new specialist skill/capability for OmegaClaw using Agentverse. This means building a specialist agent for a specific use case, registering it on Agentverse, and creating the OmegaClaw skill or integration layer that allows OmegaClaw to discover, invoke, and use that agent.
+
+| Requirement | How We Meet It |
+|-------------|----------------|
+| Build a new specialist skill/capability | Visual person identification from name badge + web context lookup. Not in OmegaClaw's existing 56 skills. |
+| Build a specialist agent for a specific use case | Python uAgent deployed on Agentverse. Receives extracted name + org, returns structured person context. |
+| Register it on Agentverse | Agent registered via Agentverse dashboard with a unique agent address. Discoverable by OmegaClaw. |
+| Create the OmegaClaw skill/integration layer | OmegaClaw skill definition that maps the 'identify_person' intent to our Agentverse agent endpoint. |
+| Allow OmegaClaw to discover, invoke, and use the agent | Skill registered in OmegaClaw skill library. Invoked via standard OmegaClaw tool call routing. |
+| Demo with real use case | Live demo on hackathon floor: glasses see a name badge, agent identifies the person, result spoken back. |
 
 ---
 
 ## 3. System Architecture
 
+### 3.1 Full Data Flow
+
 ```
-User Voice Input (glasses mic / phone mic)
-        │
-        ▼
-┌─────────────────────────┐
-│  Gemini Live            │  ← Speech-to-text, streaming audio
-│  (on-device / edge)     │  ← Vision via glasses camera / phone camera
-└────────────┬────────────┘
-             │ Transcribed intent
-             ▼
-┌─────────────────────────┐
-│  Orchestration Model    │  ← TBD (Claude / GPT-4o / Gemini 1.5 Pro)
-│  (intent classification │
-│   + task decomposition) │
-└──────┬──────────┬───────┘
-       │          │
-       ▼          ▼
-┌──────────┐  ┌──────────────────────┐
-│  Gemini  │  │  OmegaClaw           │
-│  Vision  │  │  (Fetch.ai uAgents)  │
-│  Module  │  │                      │
-└──────────┘  │  ┌────────────────┐  │
-              │  │ Web Search     │  │
-              │  │ Calendar Agent │  │
-              │  │ Shopping List  │  │
-              │  │ Messaging (P2) │  │
-              │  └────────────────┘  │
-              └──────────────────────┘
-                       │
-              ┌────────▼─────────┐
-              │  Gemma Sub-Agent │  ← Response formatting, disambiguation
-              └────────┬─────────┘
-                       │
-                       ▼
-              Text-to-Speech → Glasses Speaker
+User: 'Who is this?' + glasses camera sees name badge
+
+1. JPEG frame (~1fps) + voice audio --> GeminiLiveService.swift (WebSocket)
+
+2. Gemini Live (Google API)
+   - Hears 'Who is this?'
+   - Sees current JPEG frame
+   - Extracts: name, organization, title from badge via vision
+   - Fires tool call: identify_person({name, organization, title})
+
+3. ToolCallRouter.swift --> OpenClawBridge.swift
+   POST https://omegaclaw-gateway/v1/chat/completions
+   { task: 'Identify person: [Name], [Org], [Title]' }
+
+4. OmegaClaw Gateway
+   - Matches task to registered 'identify_person' skill
+   - Invokes our Agentverse agent via uAgent protocol
+
+5. Agentverse uAgent (our Python FastAPI service)
+   - Receives: name, organization, title
+   - Queries: Gemini API (web grounding) for public context
+   - Returns: { summary: '2-sentence context', confidence: high/low }
+
+6. OmegaClaw returns result to OpenClawBridge
+
+7. Gemini synthesizes spoken response
+   'That's Sarah Chen, CTO at Fetch.ai. She leads the Agentverse
+    platform and was previously at DeepMind.'
+
+8. AudioManager plays PCM audio through glasses speaker
 ```
 
-### Component Responsibility Map
+### 3.2 Component Map
 
-| Component | Role | Owner (suggested) |
-|-----------|------|-------------------|
-| Swift iOS app | UI shell, camera feed, audio I/O, API bridge | Engineer A |
-| Gemini Live | STT, TTS, camera vision | Engineer A/B |
-| Orchestration model (TBD) | Intent routing, task decomposition | Engineer B |
-| OmegaClaw integration | Tool execution (search, calendar, lists) | Engineer C |
-| Gemma sub-agents | Response cleaning, follow-up parsing | Engineer D |
-| Phone-camera test harness | Phase 1 testing scaffold | All |
-
----
-
-## 4. Phased Delivery Plan
-
-### Phase 1 — Orchestration Validation via Phone (Hours 0–10)
-Get the full agent loop working using the phone camera as a proxy for Meta Glasses. No hardware dependency. Goal is to validate that voice → orchestrator → OmegaClaw → response works end-to-end.
-
-**Deliverables:**
-- Swift app capturing phone camera feed and mic input
-- Gemini Live integration for STT and vision queries
-- Orchestrator calling OmegaClaw for at least one tool (web search)
-- Audio response spoken back to user
-
-### Phase 2 — Meta Glasses Integration (Hours 10–18)
-Swap the phone camera feed for the Meta Glasses camera stream. Connect the audio I/O path to the glasses speaker/mic via the Meta SDK.
-
-**Deliverables:**
-- Meta Glasses SDK integrated into Swift app
-- Camera + mic input routing switched to glasses hardware
-- All Phase 1 functionality working through glasses
-
-### Phase 3 — Polish & Demo Prep (Hours 18–20)
-Stabilize the demo, add fallback handling, rehearse the 3-minute pitch flow.
-
-**Deliverables:**
-- At least 3 scripted demo scenarios tested end-to-end
-- Graceful error messages for failed OmegaClaw calls
-- README and demo script written
+| Component | Technology | Where It Lives | Owner |
+|-----------|-----------|----------------|-------|
+| iOS Glasses App | Swift, Meta DAT SDK, AVFoundation | VisionClaw repo (fork) | A |
+| Gemini Live Service | WebSocket, Gemini Live API | GeminiLiveService.swift | A/B |
+| Vision OCR + Tool Call | Gemini vision + function calling | GeminiConfig.swift system prompt | B |
+| OmegaClaw Bridge | HTTP POST, Swift URLSession | OpenClawBridge.swift | C |
+| OmegaClaw Skill Definition | OmegaClaw skill config (JSON/YAML) | OmegaClaw skill registry | C |
+| Agentverse uAgent | Python, uAgents SDK, FastAPI | Hosted on Agentverse | C/D |
+| Person Context Service | Gemini API (web grounding), Python | Inside uAgent | C/D |
+| Agentverse Registration | Agentverse dashboard + CLI | fetch.ai/agentverse | C |
 
 ---
 
-## 5. Feature Specifications
+## 4. The Agentverse uAgent — Prize Track Deliverable
 
-### 5.1 Multi-Step Agentic Workflow (P0 — Primary Demo)
+This section is the most important in the PRD. The Agentverse agent is what gets judged. Build this first, demo second.
 
-**Description:** User speaks a request that requires more than one step to complete. The orchestrator decomposes the task, calls the appropriate OmegaClaw agents in sequence or parallel, and synthesizes a spoken response.
+### 4.1 Agent Specification
 
-**Example flows:**
-- "Find the best coffee shops near me and add the top result to my calendar for tomorrow at 10am"
-  - Step 1: OmegaClaw web search agent → top 3 results
-  - Step 2: Gemma sub-agent formats results, picks top result
-  - Step 3: OmegaClaw calendar agent → creates event
-  - Step 4: TTS confirms action
-- "Search for flights to Tokyo next weekend and tell me the cheapest option"
-  - Step 1: OmegaClaw web search
-  - Step 2: Gemma parses and ranks results
-  - Step 3: TTS speaks summary
+- Agent name: ContextLens Person Intelligence Agent
+- Agent type: Specialist uAgent registered on Fetch.ai Agentverse
+- Input: `{ name: string, organization: string, title: string }`
+- Output: `{ summary: string (max 2 sentences), confidence: 'high' | 'low', source: string }`
+- Latency target: <3s from receipt of input to response
 
-**Acceptance criteria:**
-- At least one 2-step chain demonstrated live
-- Total round-trip latency under 8 seconds for 2-step chain
-- Spoken confirmation includes result of both steps
+### 4.2 Agent Implementation
+
+The agent is a Python service using the uAgents SDK, wrapped in FastAPI for the HTTP layer that OmegaClaw calls.
+
+**File Structure**
+
+```
+contextlens-agent/
+  agent.py           # uAgent definition, message handlers, Agentverse registration
+  context_service.py # Gemini API calls for person context lookup
+  models.py          # Pydantic models for input/output
+  main.py            # FastAPI app entry point
+  requirements.txt   # uagents, fastapi, uvicorn, google-generativeai
+  .env               # GEMINI_API_KEY, AGENT_SEED
+```
+
+**agent.py**
+
+```python
+from uagents import Agent, Context, Model
+from context_service import get_person_context
+
+class PersonQuery(Model):
+    name: str
+    organization: str
+    title: str
+
+class PersonContext(Model):
+    summary: str
+    confidence: str  # 'high' or 'low'
+    source: str
+
+agent = Agent(
+    name='contextlens-person-intelligence',
+    seed='YOUR_AGENT_SEED_PHRASE',  # deterministic address
+    port=8001,
+    endpoint=['http://YOUR_HOST:8001/submit']
+)
+
+@agent.on_message(model=PersonQuery)
+async def handle_query(ctx: Context, sender: str, msg: PersonQuery):
+    result = await get_person_context(msg.name, msg.organization, msg.title)
+    await ctx.send(sender, PersonContext(**result))
+
+if __name__ == '__main__':
+    agent.run()
+```
+
+**context_service.py**
+
+```python
+import google.generativeai as genai
+import os
+
+genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+async def get_person_context(name: str, org: str, title: str) -> dict:
+    prompt = f'''
+    Person: {name}
+    Organization: {org}
+    Title: {title}
+
+    In exactly 2 sentences, describe who this person is and what they are known for.
+    Focus on their professional role and most notable achievement or project.
+    If you cannot find reliable information, say so in 1 sentence.
+    Do not mention sources. Write for spoken audio, not reading.
+    '''
+    response = model.generate_content(prompt)
+    text = response.text.strip()
+    confidence = 'low' if any(w in text.lower() for w in ['cannot', 'not find', 'unclear', 'no information']) else 'high'
+    return { 'summary': text, 'confidence': confidence, 'source': 'gemini-web-grounding' }
+```
+
+**main.py (FastAPI bridge for OmegaClaw HTTP calls)**
+
+```python
+from fastapi import FastAPI
+from models import PersonQuery, PersonContext
+from context_service import get_person_context
+
+app = FastAPI()
+
+@app.post('/v1/chat/completions')
+async def completions(request: dict):
+    task = request['messages'][-1]['content']
+    name, org, title = parse_task(task)
+    result = await get_person_context(name, org, title)
+    return {
+        'choices': [{
+            'message': { 'role': 'assistant', 'content': result['summary'] }
+        }]
+    }
+
+def parse_task(task: str) -> tuple:
+    # Task format: 'Identify person: [Name], [Org], [Title]'
+    parts = task.replace('Identify person: ', '').split(', ')
+    name = parts[0] if len(parts) > 0 else 'Unknown'
+    org = parts[1] if len(parts) > 1 else 'Unknown'
+    title = parts[2] if len(parts) > 2 else 'Unknown'
+    return name, org, title
+```
+
+### 4.3 Agentverse Registration Steps
+
+This is a sequential checklist. Do not skip steps. Complete this by end of hour 4.
+
+1. Install uAgents SDK: `pip install uagents`
+2. Create agent with deterministic seed (generates a stable agent address)
+3. Run agent locally: `python agent.py` — note the agent address printed on startup (`agent1q...`)
+4. Go to https://agentverse.ai — create account if needed
+5. Register agent: Agents > Create Agent > Hosted or Remote
+   - For hackathon: use Remote agent (your FastAPI endpoint, publicly reachable)
+   - Enter your ngrok or cloud URL as the endpoint
+6. Add agent metadata: name, description, input/output schema
+7. Verify agent is discoverable: search for 'contextlens' in Agentverse explorer
+8. Note the agent address — you need it for the OmegaClaw skill config
+
+### 4.4 Making the Agent Publicly Reachable (Hackathon Environment)
+
+The Agentverse needs to reach your FastAPI endpoint. Options in order of preference:
+
+- **Option A (recommended):** Deploy to a free cloud host. Railway.app or Render.com can deploy a FastAPI app from GitHub in under 10 minutes. Free tier is sufficient for hackathon traffic.
+- **Option B:** ngrok tunnel from a local machine. Run: `ngrok http 8001`. Use the https ngrok URL as your Agentverse endpoint. Risk: if the machine sleeps or ngrok disconnects, demo breaks.
+- **Option C:** Fly.io or Google Cloud Run. More setup but more stable. Only if your team has existing accounts.
+
+**CRITICAL:** Whatever host you choose, test the endpoint externally (from a phone hotspot, not the same network) before registering it on Agentverse.
 
 ---
 
-### 5.2 Scene Description / Vision (P1)
+## 5. OmegaClaw Skill Definition
 
-**Description:** User asks "What am I looking at?" or "Describe what's in front of me." Gemini Live processes the current camera frame and speaks back a scene description.
+This is the integration layer that tells OmegaClaw about your agent. Without this, OmegaClaw cannot discover or invoke your Agentverse agent, and the prize track requirement is not met.
 
-**Example utterances:**
-- "What am I looking at?"
-- "Is this restaurant busy?"
-- "What does this sign say?"
+### 5.1 Skill Config
 
-**Acceptance criteria:**
-- Responds within 3 seconds of utterance
-- Describes the primary subject(s) in the scene accurately
-- Handles low-light and blurry frames gracefully (returns "I can't see clearly, try moving closer")
+OmegaClaw skills are defined as structured configs. The exact format depends on the OmegaClaw version at the hackathon — get the template from the Fetch.ai team on day 1. The conceptual structure:
 
----
+```json
+{
+  "skill_name": "identify_person",
+  "description": "Identify a person from their name badge and return professional context.",
+  "trigger_phrases": [
+    "who is this",
+    "identify this person",
+    "who am I looking at",
+    "tell me about this person"
+  ],
+  "agent_address": "agent1qYOUR_AGENT_ADDRESS_HERE",
+  "input_schema": {
+    "name": "string",
+    "organization": "string",
+    "title": "string"
+  },
+  "output_schema": {
+    "summary": "string"
+  },
+  "timeout_ms": 5000
+}
+```
 
-### 5.3 Web Search via OmegaClaw (P1)
+### 5.2 OmegaClaw Integration with OpenClawBridge.swift
 
-**Description:** User asks a factual or local question. Orchestrator routes to OmegaClaw's web search agent. Gemma sub-agent summarizes results. TTS speaks back the answer.
+The existing OpenClawBridge.swift in the VisionClaw repo POSTs to `/v1/chat/completions`. OmegaClaw sits between the Swift app and your Agentverse agent. The bridge config in Secrets.swift:
 
-**Example utterances:**
-- "Search for the best coffee shops nearby"
-- "What's the weather like this afternoon?"
-- "Who won the game last night?"
+```swift
+static let openClawHost = "https://YOUR_OMEGACLAW_ENDPOINT"
+static let openClawPort = 443
+static let openClawGatewayToken = "YOUR_OMEGACLAW_TOKEN"
+```
 
-**Acceptance criteria:**
-- Returns spoken answer within 5 seconds
-- Summary is under 3 sentences (Gemma formats for speech, not reading)
-
----
-
-### 5.4 Calendar Scheduling via OmegaClaw (P1)
-
-**Description:** User creates, checks, or modifies calendar events via voice.
-
-**Example utterances:**
-- "Add a dentist appointment tomorrow at 3pm"
-- "What do I have going on Friday?"
-- "Move my 2pm meeting to 4pm"
-
-**Acceptance criteria:**
-- Create event confirmed in connected calendar (Google or Apple)
-- Read-back of schedule returns correct events
-- Ambiguous time ("next week") prompts a clarifying question before acting
+Verify on day 1: does OmegaClaw expose `/v1/chat/completions`? If it uses a different path, update OpenClawBridge.swift. One function change, 10 minutes.
 
 ---
 
-### 5.5 Shopping List / Reminders via OmegaClaw (P1)
+## 6. iOS App Changes from VisionClaw Baseline
 
-**Description:** User adds items to a shopping list or creates reminders through a connected list app.
+The VisionClaw repo is the base. Minimize changes. Every line you write that already exists in the repo is wasted time.
 
-**Example utterances:**
-- "Add milk and eggs to my shopping list"
-- "Remind me to call the plumber when I get home"
+### 6.1 Changes Required
 
-**Acceptance criteria:**
-- Items confirmed in connected list app within 3 seconds
-- Multi-item requests ("milk, eggs, and bread") parsed correctly
-- Spoken confirmation lists all added items
+| File | Change | Complexity | Owner |
+|------|--------|-----------|-------|
+| Secrets.swift | Fill in Gemini API key, OmegaClaw host/port/token | Trivial | A |
+| GeminiConfig.swift | New system prompt (see Section 7), add identify_person tool declaration | Low | B |
+| ToolCallModels.swift | Add identify_person function declaration schema | Low | C |
+| OpenClawBridge.swift | Update endpoint path/auth if OmegaClaw format differs | Low-Med | C |
+| Nothing else | Do not touch GeminiLiveService, AudioManager, IPhoneCameraManager, WebRTC | N/A | All |
 
----
+### 6.2 identify_person Tool Declaration (ToolCallModels.swift)
 
-### 5.6 Messaging via OmegaClaw (P2 — Stretch)
-
-**Description:** User sends messages to contacts through connected messaging apps (WhatsApp, Telegram, iMessage).
-
-**Example utterances:**
-- "Send a message to John saying I'll be late"
-- "Reply to Sarah's last message with 'on my way'"
-
-**Acceptance criteria:**
-- Message sent to correct contact on correct platform
-- Confirmation spoken back before sending (with 3-second cancel window)
-- Only surfaces if time allows after P0/P1 are solid
-
----
-
-### 5.7 Proactive Context Awareness (P2 — Stretch)
-
-**Description:** Glasses passively observe the scene and surface relevant information without being asked.
-
-**Example:** User is reading a menu → glasses say "The pasta here has strong reviews."
-
-**Note:** Deprioritize for this hackathon. Requires always-on vision processing which may exceed latency and battery constraints in 20 hours.
-
----
-
-## 6. Technical Stack
-
-| Layer | Technology | Notes |
-|-------|-----------|-------|
-| Mobile app | Swift (iOS) | Handles camera, mic, audio playback, API orchestration |
-| Speech I/O | Gemini Live | Streaming STT + TTS; multimodal vision input |
-| Orchestration | TBD (Claude / GPT-4o / Gemini 1.5 Pro) | Intent classification, task decomposition, tool routing |
-| Tool execution | OmegaClaw (Fetch.ai uAgents) | Executes real-world tasks via registered agent network |
-| Sub-agents | Gemma | Response formatting, disambiguation, result ranking |
-| Glasses hardware | Meta smart glasses | Phase 2 only; Phase 1 uses phone camera |
-| Phase 1 test harness | iPhone camera + Xcode simulator | Validates full orchestration loop before glasses |
-
-**OmegaClaw Integration Notes:**
-- OmegaClaw exposes tool-use capabilities as uAgents on the Fetch.ai Agentverse network
-- The Swift app (or an intermediary Python service) calls the OmegaClaw endpoint with a structured task payload
-- Confirmed available tools for this build: web search, calendar, shopping list/reminders
-- Messaging tools (WhatsApp/Telegram/iMessage) to be validated during integration; treat as P2 until confirmed
+```json
+{
+  "name": "identify_person",
+  "description": "Identify a person visible in the camera frame from their name badge. Use when the user asks who someone is, who they are looking at, or to identify a person.",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "name": {
+        "type": "STRING",
+        "description": "Full name extracted from the badge"
+      },
+      "organization": {
+        "type": "STRING",
+        "description": "Company or organization on the badge"
+      },
+      "title": {
+        "type": "STRING",
+        "description": "Job title on the badge, or empty string if not visible"
+      }
+    },
+    "required": ["name", "organization"]
+  }
+}
+```
 
 ---
 
-## 7. Out of Scope (for this hackathon)
+## 7. Gemini System Prompt (GeminiConfig.swift)
 
-- On-device model inference (all models run via API)
-- Custom wake word (use tap-to-activate)
+This controls everything Gemini does. Get this right before hour 3. Iterate based on testing.
+
+```
+You are ContextLens, a hands-free AI assistant running on Meta Ray-Ban smart glasses.
+The user cannot look at a screen. All output is spoken audio only.
+
+YOUR PRIMARY FUNCTION:
+When the user asks 'Who is this?', 'Who am I looking at?', or similar,
+look at the current camera frame, read the name badge, and call identify_person
+with the name, organization, and title you can see.
+
+VISION RULES:
+- Always check the camera frame before responding to identity questions.
+- Extract name and organization from any visible badge, lanyard, or name tag.
+- If you cannot read the badge clearly, say 'I cannot read the badge, try moving closer'
+  and DO NOT call identify_person.
+- If there is no badge visible, say 'I do not see a name badge in view.'
+
+RESPONSE RULES:
+- Maximum 2 sentences. Lead with the person's name.
+- Speak naturally, not like a database readout.
+- Never say 'According to my search' or 'Based on available information'.
+- If confidence is low, add: 'though I am not fully certain about the details.'
+- Never repeat the badge text back verbatim. Add context, not transcription.
+
+TOOL USE:
+- Always verbally acknowledge before tool calls: 'Looking that up.'
+- Never speak the result before receiving the tool response.
+- If the tool fails, say 'I could not find information on that person right now.'
+```
+
+---
+
+## 8. Phased Delivery Plan
+
+| Phase | Hours | Goal | Gate |
+|-------|-------|------|------|
+| 0: Foundation | 0-2 | Repo cloned, Secrets.swift filled, app runs on iPhone, Gemini audio confirmed working | Say 'Hello' — Gemini responds via glasses speaker |
+| 1: Agent Build | 2-6 | Python uAgent built, FastAPI running locally, Gemini context lookup confirmed working, Agentverse registration complete | curl to your FastAPI returns a valid person summary |
+| 2: OmegaClaw Skill | 6-10 | OmegaClaw skill definition registered, end-to-end test: iOS app → OmegaClaw → Agentverse agent → spoken response | Say 'Who is this?' at a badge — spoken context returned |
+| 3: Glasses Hardware | 10-16 | Swap from iPhone camera to Meta Glasses. All Phase 2 functionality working through glasses. | Full demo flow works through glasses hardware |
+| 4: Polish & Demo Prep | 16-20 | 3 scripted scenarios rehearsed, error handling tested, README + pitch written | 3-minute dry run passes without intervention |
+
+### 8.1 Phase 0 Checklist (Hours 0-2)
+
+- `git clone https://github.com/Intent-Lab/VisionClaw.git`
+- `cd samples/CameraAccess && open CameraAccess.xcodeproj`
+- `cp CameraAccess/Secrets.swift.example CameraAccess/Secrets.swift`
+- Add Gemini API key to Secrets.swift
+- Build + run on physical iPhone (not simulator — audio requires real device)
+- Tap 'Start on iPhone', tap AI button, say 'Hello' — confirm spoken response
+- Confirm OmegaClaw endpoint format with Fetch.ai team (get exact URL + auth token)
+
+### 8.2 Phase 1 Checklist (Hours 2-6) — Engineer C/D
+
+- `mkdir contextlens-agent && cd contextlens-agent`
+- `pip install uagents fastapi uvicorn google-generativeai python-dotenv`
+- Write agent.py, context_service.py, models.py, main.py (see Section 4.2)
+- Test context_service.py standalone: `python -c "import asyncio; from context_service import get_person_context; print(asyncio.run(get_person_context('Elon Musk', 'xAI', 'CEO')))"`
+- Run FastAPI locally: `uvicorn main:app --port 8001`
+- Test endpoint: `curl -X POST http://localhost:8001/v1/chat/completions -H 'Content-Type: application/json' -d '{"messages":[{"role":"user","content":"Identify person: Elon Musk, xAI, CEO"}]}'`
+- Deploy to Railway/Render — get public HTTPS URL
+- Test deployed endpoint from phone hotspot (not same network)
+- Register agent on Agentverse — note agent address
+- Screenshot the registered agent on Agentverse for demo/judging evidence
+
+### 8.3 Phase 2 Checklist (Hours 6-10) — Engineer C + A
+
+- Get OmegaClaw skill config template from Fetch.ai team
+- Fill in skill config with agent address and trigger phrases
+- Register skill in OmegaClaw
+- Update Secrets.swift with OmegaClaw host + token
+- Update OpenClawBridge.swift if endpoint format differs
+- Add identify_person tool declaration to GeminiConfig.swift
+- Update system prompt in GeminiConfig.swift (see Section 7)
+- End-to-end test on iPhone: point camera at printed name badge, say 'Who is this?'
+- Confirm spoken response within 8 seconds
+- Test failure case: point at blank wall, confirm graceful response
+
+### 8.4 Phase 3 Checklist (Hours 10-16) — Engineer A
+
+- Enable Developer Mode in Meta AI app: Settings > App Info > tap version 5x
+- In app: tap 'Start Streaming', connect glasses
+- Confirm camera switches to glasses PoV
+- Confirm mic/speaker routing: voice from glasses, audio from phone speaker
+- Run full identify_person flow through glasses
+- Test audio session switch to .videoChat (no echo/feedback)
+- Walk around hackathon floor and test on real badges (with permission)
+
+### 8.5 Phase 4 Checklist (Hours 16-20) — All
+
+- Run demo script 5 times without stopping
+- Test circuit breaker: kill FastAPI, confirm Gemini speaks fallback after 3 failures
+- Prepare 3 printed name badge props as backup if real badges not available
+- Write README with setup instructions and Agentverse agent address
+- Prepare judging evidence: screenshots of Agentverse registration, skill config, demo video
+
+---
+
+## 9. Risks & Mitigations
+
+| Risk | Severity | Mitigation |
+|------|----------|-----------|
+| OmegaClaw skill registration format unknown / not documented | Critical | First task day 1: find a Fetch.ai team member and get the exact skill config format and a working example. Do not guess. This is required for the prize track. |
+| Agentverse agent not reachable from OmegaClaw (firewall / network) | Critical | Deploy to Railway/Render immediately. Test from external network. ngrok is a last resort only — it disconnects. |
+| Gemini cannot read the badge from glasses camera resolution | High | Test badge readability in Phase 2 with printed badges at varying distances. If glasses resolution is insufficient, have the user move to 30-50cm from the badge. Add to system prompt: 'If badge is not readable, ask user to move closer.' |
+| OmegaClaw endpoint format differs from /v1/chat/completions | High | Confirm format in Phase 0. One function change in OpenClawBridge.swift. 10 minutes. |
+| Person not findable by Gemini (private individual, no web presence) | Medium | Confidence field handles this. System prompt instructs Gemini to say 'I found [Name] from [Org] but could not find further details.' Demo with well-known public figures as backup. |
+| uAgents SDK breaking change / version incompatibility | Medium | Pin all versions in requirements.txt. Test install on a clean virtualenv before hackathon. |
+| Meta Glasses not pairing or DAT SDK issues | Medium | Phase 1-2 fully works on iPhone camera. Demo can run on iPhone if glasses fail. Never let glasses block agent work. |
+| OmegaClaw latency stack adds >5s on top of agent time | Medium | Measure end-to-end in Phase 2. If latency >8s, add optimistic Gemini speech ('Looking that up, one moment') to cover the wait. |
+
+---
+
+## 10. Demo Script — 3-Minute Hackathon Pitch
+
+Prepare 3 printed name badge props. Do not rely on real badges being available or readable. Control your demo.
+
+| # | Scene | Duration | User Says | Expected Output | Fallback |
+|---|-------|----------|-----------|-----------------|----------|
+| 1 | Setup | 20s | (Narrator) 'You're at a conference. You see someone interesting but don't want to pull out your phone.' | N/A — context setting | N/A |
+| 2 | Vision check | 20s | 'What do I see?' (pointing at badge) | Gemini describes the badge / scene | Skip if glasses unavailable, use iPhone |
+| 3 | Primary demo | 60s | 'Who is this?' (pointing at printed badge: 'Sarah Chen, CTO, Fetch.ai') | Gemini reads badge, calls identify_person, speaks: 'That's Sarah Chen, CTO at Fetch.ai. She leads the Agentverse platform and agent economy infrastructure.' | Have result pre-cached as fallback audio |
+| 4 | Second badge | 40s | 'Who is this?' (different badge: 'Alex Kumar, Founder, Ritual') | Second identify_person call, different context spoken back | Skip if time tight |
+| 5 | Failure handling | 20s | 'Who is this?' (pointing at blank wall) | Gemini: 'I do not see a name badge in view.' | N/A — this IS the fallback demo |
+| 6 | Wrap | 20s | (Narrator) Architecture explanation: Agentverse agent + OmegaClaw skill + Meta glasses | Show Agentverse dashboard on laptop with agent registered | Show screenshot if dashboard slow |
+
+Rehearse minimum 5 full runs. Know what Gemini says when the badge is unreadable. Know what happens when OmegaClaw times out. Every failure mode should be something you can explain as a feature, not an apology.
+
+---
+
+## 11. Engineer Assignments
+
+| Engineer | Primary Role | Phase 0-2 | Phase 3-4 |
+|----------|-------------|-----------|-----------|
+| A | iOS App + Glasses Hardware | Clone repo, Secrets.swift, Gemini audio pipeline stable on iPhone, Phase 3 glasses integration | Glasses hardware testing, audio session validation, demo rehearsal |
+| B | Gemini Config + System Prompt | Write + iterate system prompt, identify_person tool declaration, vision OCR testing with printed badges at range | Latency tuning, system prompt edge case testing, backup for any Gemini API issues |
+| C | Agentverse Agent + OmegaClaw Skill | Python uAgent, FastAPI service, Agentverse registration, OmegaClaw skill config, OpenClawBridge.swift update | End-to-end integration testing, circuit breaker testing, agent monitoring during demo |
+| D | Agent Context Service + QA | context_service.py Gemini API implementation, deployment to Railway/Render, external endpoint testing, test with 10+ different person queries | README writing, judging evidence preparation, demo script practice, fallback scenario docs |
+
+---
+
+## 12. Latency Budget
+
+| Step | Target | Notes |
+|------|--------|-------|
+| Voice to Gemini STT | <500ms | Gemini Live native audio — no separate STT step |
+| Gemini badge OCR + tool call decision | <1s | Vision + intent classification happens in same Gemini inference |
+| Gemini verbal acknowledgment ('Looking that up') | <500ms | Spoken before tool call dispatched — covers wait time |
+| OmegaClaw routing to Agentverse agent | <1s | Network hop: OmegaClaw → Agentverse → FastAPI |
+| Gemini API call inside context_service.py | <2s | gemini-1.5-flash is fast for this prompt length |
+| Agent response back to OmegaClaw → iOS | <500ms | Return trip |
+| Gemini synthesis to audio | <1s | PCM audio generation |
+| **Total end-to-end** | **<7s** | Acceptable for hackathon demo. Verbal ack covers first 2s. |
+
+---
+
+## 13. Out of Scope
+
+- Separate orchestration model (Claude, GPT-4o) — Gemini Live handles this natively
+- Gemma sub-agents — no benefit, added latency and complexity
+- Persistent memory across sessions
 - Multi-language support
-- User authentication / account management
-- Persistent conversation memory across sessions
-- Android or non-Meta glasses hardware
-- Always-on passive scene monitoring
+- Android build
+- WebRTC live streaming — cannot run simultaneously with Gemini Live
+- Always-on passive identification — privacy concern and battery/latency constraint
+- Facial recognition — use badge text OCR only, not biometric identification
+- Any other OmegaClaw tool (web search, calendar, shopping) — single focused skill wins over breadth
 
 ---
 
-## 8. Risks & Mitigations
+## 14. Appendix — Key Links & Commands
 
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| OmegaClaw API latency too high for real-time feel | Medium | Cache common results; use optimistic spoken responses ("On it...") while waiting |
-| Meta Glasses SDK integration takes longer than expected | Medium | Phase 1 phone-camera harness ensures demo works even if Phase 2 incomplete |
-| Orchestration model picks wrong tool | Medium | Add explicit routing rules as system prompt guardrails for the 4 primary tools |
-| Gemini Live STT struggles with background noise | Low | Test outdoors early; add push-to-talk fallback |
-| OmegaClaw messaging integrations not available in time | Low | Messaging is P2; drop it cleanly if not confirmed by hour 10 |
+### 14.1 Links
 
----
+- VisionClaw repo: https://github.com/Intent-Lab/VisionClaw
+- Agentverse: https://agentverse.ai
+- uAgents SDK docs: https://docs.fetch.ai/uagents
+- Fetch.ai OmegaClaw docs: https://fetch.ai/docs
+- Gemini API key: https://aistudio.google.com/apikey
+- Gemini Live API: https://ai.google.dev/gemini-api/docs/live
+- Meta DAT SDK: https://developers.facebook.com/docs/ray-ban-meta-smart-glasses
+- Railway deployment: https://railway.app
 
-## 9. Demo Script (3-minute Hackathon Pitch)
+### 14.2 Key Commands
 
-**Scene 1 — Vision (30s)**  
-Put on glasses, tap AI button: *"What am I looking at?"* → Gemini describes the scene.
+```bash
+# iOS App Setup
+git clone https://github.com/Intent-Lab/VisionClaw.git
+cd VisionClaw/samples/CameraAccess
+cp CameraAccess/Secrets.swift.example CameraAccess/Secrets.swift
+open CameraAccess.xcodeproj
 
-**Scene 2 — Simple delegation (30s)**  
-*"Add oat milk to my shopping list"* → OmegaClaw confirms item added, spoken back.
+# Python Agent Setup
+mkdir contextlens-agent && cd contextlens-agent
+python -m venv venv && source venv/bin/activate
+pip install uagents fastapi uvicorn google-generativeai python-dotenv
 
-**Scene 3 — Multi-step orchestration (90s) ← PRIMARY DEMO**  
-*"Find a good sushi restaurant nearby and add it to my calendar for dinner on Friday"*  
-→ OmegaClaw search returns results → Gemma picks top result → OmegaClaw calendar creates event → spoken confirmation of both steps.
+# Run agent locally
+python agent.py            # uAgent (port 8001)
+uvicorn main:app --port 8001  # FastAPI (same port, choose one entry point)
 
-**Scene 4 — Calendar query (30s)**  
-*"What do I have going on this Friday?"* → Reads back events including the one just created.
+# Test context service
+python -c "
+import asyncio
+from context_service import get_person_context
+print(asyncio.run(get_person_context('Sarah Chen', 'Fetch.ai', 'CTO')))
+"
 
----
+# Test FastAPI endpoint
+curl -X POST http://localhost:8001/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Identify person: Sarah Chen, Fetch.ai, CTO"}]}'
 
-## 10. Appendix — Useful Links
-
-- Fetch.ai OmegaClaw / uAgent docs: [https://fetch.ai/docs](https://fetch.ai/docs)
-- Gemini Live API: [https://ai.google.dev/gemini-api/docs/live](https://ai.google.dev/gemini-api/docs/live)
-- Meta Glasses developer SDK: [https://developers.facebook.com/docs/ray-ban-meta-smart-glasses](https://developers.facebook.com/docs/ray-ban-meta-smart-glasses)
-- Gemma model access: [https://ai.google.dev/gemma](https://ai.google.dev/gemma)
+# Deploy to Railway
+npm install -g @railway/cli
+railway login && railway init && railway up
+```
