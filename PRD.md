@@ -634,7 +634,7 @@ Phase 2:
 Phase 3:
 
 - connect Meta glasses
-- replace placeholder DAT capture
+- verify real DAT still capture
 - verify audio routing with no echo
 - run same flagship flow on hardware
 
@@ -804,7 +804,7 @@ Expected output of this verification:
 
 ### 17.3 Backend Loop Validation
 
-The repo currently contains scaffold-level backend behavior, so the team must validate the real runtime loop before building higher-level skill features.
+The repo now contains a real Gemini Live backend path, so the team must validate the full runtime loop before building higher-level skill features.
 
 Must verify:
 

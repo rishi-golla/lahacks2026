@@ -281,7 +281,16 @@ struct ContentView: View {
     private var statusLine: String {
         switch viewModel.coordinator.status {
         case .live:
-            return "Listening for questions. Visual context starts in the next phase."
+            if viewModel.coordinator.isMicStreaming && viewModel.coordinator.isVisualContextStreaming {
+                return "Listening now. Visual context is streaming."
+            }
+            if viewModel.coordinator.isMicStreaming {
+                return "Listening now. Waiting for visual context."
+            }
+            if viewModel.coordinator.isVisualContextStreaming {
+                return "Visual context is streaming. Waiting for mic."
+            }
+            return "Connected. Starting assistant inputs..."
         case .connecting, .reconnecting:
             return viewModel.coordinator.latestDebugLine
         case .error(let message):

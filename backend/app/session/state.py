@@ -66,11 +66,19 @@ class SessionLifecycleState:
                 return self
             if message_type is ClientMessageType.AUDIO_END:
                 return SessionLifecycleState(phase=SessionPhase.READY, hello=self.hello)
-            if message_type is ClientMessageType.BARGE_IN:
+            if message_type in {
+                ClientMessageType.PHOTO,
+                ClientMessageType.TEXT,
+                ClientMessageType.BARGE_IN,
+            }:
                 return self
             raise StateTransitionError(
                 message=f"{message_type} is not allowed while an audio turn is in progress",
-                details={"state": self.phase, "type": message_type, "expected": "audio|audio_end|barge_in|ping"},
+                details={
+                    "state": self.phase,
+                    "type": message_type,
+                    "expected": "audio|audio_end|photo|text|barge_in|ping",
+                },
             )
 
         raise AssertionError(f"unhandled session phase: {self.phase}")

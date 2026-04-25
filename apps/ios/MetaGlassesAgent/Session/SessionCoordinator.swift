@@ -37,6 +37,8 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var debugLog: [String] = []
     @Published private(set) var latestDebugLine = "No debug events yet"
     @Published private(set) var isLoopbackRunning = false
+    @Published private(set) var isMicStreaming = false
+    @Published private(set) var isVisualContextStreaming = false
 
     private let glasses: GlassesSession
     private let glassesSourceLabel: String
@@ -45,7 +47,11 @@ final class SessionCoordinator: ObservableObject {
     private let photoCapture = PhotoCapture()
     private var receiveTask: Task<Void, Never>?
     private var glassesStateTask: Task<Void, Never>?
+    private var micStreamingTask: Task<Void, Never>?
+    private var visualContextTask: Task<Void, Never>?
     private var sessionResumeToken: String?
+    private var sentAudioChunkCount = 0
+    private var sentVisualFrameCount = 0
 
     init(
         glasses: GlassesSession,
@@ -85,6 +91,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func stop() async {
+        await stopAssistantInputLoops()
         receiveTask?.cancel()
         receiveTask = nil
         glassesStateTask?.cancel()
@@ -193,6 +200,7 @@ final class SessionCoordinator: ObservableObject {
         case .ready(let ready):
             sessionResumeToken = ready.sessionResumeToken
             appendDebug("Backend ready: \(ready.model)")
+            await startAssistantInputLoops()
         case .sessionUpdate(let update):
             sessionResumeToken = update.sessionResumeToken
             appendDebug("Session token refreshed")
@@ -242,6 +250,104 @@ final class SessionCoordinator: ObservableObject {
         } catch {
             appendDebug("look_request failed via \(glassesSourceLabel): \(error.localizedDescription)")
         }
+    }
+
+    private func startAssistantInputLoops() async {
+        startVisualContextLoop()
+        await startMicStreaming()
+    }
+
+    private func startMicStreaming() async {
+        guard micStreamingTask == nil else {
+            return
+        }
+
+        do {
+            try await audioPipeline.start()
+        } catch {
+            appendDebug("Mic streaming failed to start: \(error.localizedDescription)")
+            return
+        }
+
+        sentAudioChunkCount = 0
+        isMicStreaming = true
+        appendDebug("Mic streaming started")
+        micStreamingTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                isMicStreaming = false
+            }
+
+            for await chunk in audioPipeline.micCapture.chunks {
+                if Task.isCancelled {
+                    break
+                }
+
+                do {
+                    let message = AudioFrame(
+                        pcmBase64: chunk.base64EncodedString(),
+                        sampleRate: Int(MicCapture.targetSampleRate)
+                    )
+                    try await backend.send(.audio(message))
+                    sentAudioChunkCount += 1
+                    if sentAudioChunkCount == 1 || sentAudioChunkCount.isMultiple(of: 50) {
+                        appendDebug("Mic audio sent: \(sentAudioChunkCount) chunks")
+                    }
+                } catch {
+                    appendDebug("Mic audio send failed: \(error.localizedDescription)")
+                    break
+                }
+            }
+        }
+    }
+
+    private func startVisualContextLoop() {
+        guard visualContextTask == nil else {
+            return
+        }
+
+        sentVisualFrameCount = 0
+        isVisualContextStreaming = true
+        appendDebug("Auto visual context started via \(glassesSourceLabel)")
+        visualContextTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                isVisualContextStreaming = false
+            }
+
+            for await image in glasses.videoFrames(at: 1) {
+                if Task.isCancelled {
+                    break
+                }
+
+                do {
+                    let jpeg = try photoCapture.resizeAndEncode(image)
+                    lastPhoto = UIImage(data: jpeg) ?? image
+                    let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .auto)
+                    appendDebug("Auto visual frame prepared: \(jpeg.count) bytes via \(glassesSourceLabel)")
+                    try await backend.send(.photo(message))
+                    sentVisualFrameCount += 1
+                    appendDebug("Auto visual frame sent: \(jpeg.count) bytes via \(glassesSourceLabel)")
+                } catch {
+                    appendDebug("Auto visual frame failed via \(glassesSourceLabel): \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func stopAssistantInputLoops() async {
+        micStreamingTask?.cancel()
+        micStreamingTask = nil
+        visualContextTask?.cancel()
+        visualContextTask = nil
+        isMicStreaming = false
+        isVisualContextStreaming = false
+
+        try? await backend.send(.audioEnd)
     }
 
     private func appendDebug(_ line: String) {

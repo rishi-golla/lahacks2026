@@ -55,13 +55,16 @@ class SessionStateTests(unittest.TestCase):
         with self.assertRaises(StateTransitionError):
             state.transition(AudioEndMessage())
 
-    def test_text_and_photo_are_blocked_while_audio_is_open(self) -> None:
+    def test_text_and_photo_are_allowed_while_audio_is_open(self) -> None:
         state = SessionLifecycleState(phase=SessionPhase.RECEIVING_AUDIO, hello=_hello())
 
-        with self.assertRaises(StateTransitionError):
-            state.transition(TextInputMessage(text="interrupt"))
-        with self.assertRaises(StateTransitionError):
-            state.transition(PhotoFrame(jpeg_b64="/9j/", trigger=PhotoTrigger.USER_REQUEST, tool_call_id=None, ts_ms=2))
+        self.assertEqual(state.transition(TextInputMessage(text="interrupt")), state)
+        self.assertEqual(
+            state.transition(
+                PhotoFrame(jpeg_b64="/9j/", trigger=PhotoTrigger.USER_REQUEST, tool_call_id=None, ts_ms=2)
+            ),
+            state,
+        )
 
     def test_barge_in_is_allowed_during_audio_turn(self) -> None:
         state = SessionLifecycleState(phase=SessionPhase.RECEIVING_AUDIO, hello=_hello())

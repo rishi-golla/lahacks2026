@@ -406,7 +406,10 @@ class SessionCoordinator:
             await sender.send(exc.to_server_error().to_payload())
             return
 
-        log.info("session received session_id=%s type=%s", session.session_id, message_type)
+        if message_type == "audio":
+            log.debug("session received session_id=%s type=%s", session.session_id, message_type)
+        else:
+            log.info("session received session_id=%s type=%s", session.session_id, message_type)
         if isinstance(message, PhotoFrame):
             log.info(
                 "session received photo session_id=%s trigger=%s tool_call_id=%s b64_chars=%s ts_ms=%s",

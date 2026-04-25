@@ -36,6 +36,7 @@ class _FallbackLiveConnectConfig:
     session_resumption: Any | None = None
     input_audio_transcription: Any | None = None
     output_audio_transcription: Any | None = None
+    system_instruction: str | None = None
 
 
 @dataclass(slots=True)
@@ -144,7 +145,8 @@ class GeminiLiveAdapter:
         sender: SessionSender,
     ) -> None:
         message_type = str(message.get("type", "?"))
-        log.info(
+        log_method = log.debug if message_type == "audio" else log.info
+        log_method(
             "gemini live adapter message session_id=%s type=%s",
             session.session_id,
             message_type,
@@ -213,6 +215,13 @@ class GeminiLiveAdapter:
         return self._live_connect_config(
             response_modalities=list(response_modalities),
             session_resumption=self._session_resumption_config(handle=hello.get("session_resume")),
+            system_instruction=(
+                "You are a hands-free assistant for smart glasses. The user may ask about "
+                "what they are looking at. Treat incoming realtime image/video frames as "
+                "the user's current point-of-view camera feed. If a recent frame is present, "
+                "answer visual questions from it directly instead of saying you do not have "
+                "access to the view."
+            ),
             input_audio_transcription=(
                 self._audio_transcription_config() if wants_audio_output else None
             ),
@@ -297,7 +306,7 @@ class GeminiLiveAdapter:
         server_content = getattr(response, "server_content", None)
         if server_content is None:
             return
-        log.info(
+        log.debug(
             "gemini live adapter server_content turn_complete=%s interrupted=%s",
             bool(getattr(server_content, "turn_complete", False)),
             bool(getattr(server_content, "interrupted", False)),
@@ -341,7 +350,7 @@ class GeminiLiveAdapter:
         model_turn = getattr(server_content, "model_turn", None)
         parts = getattr(model_turn, "parts", None) or []
         if parts:
-            log.info("gemini live adapter model_turn parts=%s", len(parts))
+            log.debug("gemini live adapter model_turn parts=%s", len(parts))
         for part in parts:
             inline_data = getattr(part, "inline_data", None)
             if inline_data is None or getattr(inline_data, "data", None) is None:
@@ -350,7 +359,7 @@ class GeminiLiveAdapter:
             if not mime_type.startswith("audio/pcm"):
                 continue
 
-            log.info(
+            log.debug(
                 "gemini live adapter audio chunk bytes=%s mime_type=%s",
                 len(inline_data.data),
                 mime_type,
@@ -395,11 +404,13 @@ class GeminiLiveAdapter:
         session_resumption: Any | None = None,
         input_audio_transcription: Any | None = None,
         output_audio_transcription: Any | None = None,
+        system_instruction: str | None = None,
     ) -> Any:
         if genai_types is not None:
             return genai_types.LiveConnectConfig(
                 response_modalities=response_modalities,
                 session_resumption=session_resumption,
+                system_instruction=system_instruction,
                 input_audio_transcription=input_audio_transcription,
                 output_audio_transcription=output_audio_transcription,
             )
@@ -408,6 +419,7 @@ class GeminiLiveAdapter:
             session_resumption=session_resumption,
             input_audio_transcription=input_audio_transcription,
             output_audio_transcription=output_audio_transcription,
+            system_instruction=system_instruction,
         )
 
     @staticmethod
