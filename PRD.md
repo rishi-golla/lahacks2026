@@ -702,6 +702,33 @@ Assignments should be interpreted as runtime responsibilities first, with the fl
 | C | backend and OmegaClaw integration | live bridge, tool dispatch, skill registration |
 | D | Agentverse skill and QA | flagship skill service, deployment, external verification |
 
+### 14.1 Four Development Tracks
+
+To keep development parallel and reduce cross-team blocking, implementation should be split into four distinct tracks based on the code already present in the repo.
+
+Track 1: iOS Client And Glasses Hardware
+
+- current code exists in `apps/ios/MetaGlassesAgent`
+- current strengths: session UI, debug UI, mic capture, PCM playback, mock glasses mode
+- current gaps: no continuous mic streaming loop from `MicCapture` into backend, DAT still capture still uses placeholders, DAT frame access is incomplete
+
+Track 2: Backend Live Bridge
+
+- current code exists in `backend/app`
+- current strengths: FastAPI app shell, `/session` route, structured message protocol already modeled on the iOS side
+- current gaps: backend is still an echo server, no Gemini Live session coordinator, no transcript or audio streaming, no look-request loop
+
+Track 3: OmegaClaw Integration Layer
+
+- current PRD now reflects OmegaClaw-Core channel and remote-skill patterns
+- current strengths: architecture is defined, channel-adapter and remote-skill patterns are documented
+- current gaps: no actual `channels/my_backend.py`, no `src/channels.metta` wiring, no confirmed bridge into OmegaClaw loop, no end-to-end remote skill dispatch implemented
+
+Track 4: Flagship Agentverse Skill And QA
+
+- current strengths: flagship skill scope is defined as `identify_person`, schemas and response shape are clear
+- current gaps: no deployed Agentverse skill implementation in the repo yet, no production request path, no external verification, no demo-quality evaluation harness
+
 ---
 
 ## 15. Latency Budget
