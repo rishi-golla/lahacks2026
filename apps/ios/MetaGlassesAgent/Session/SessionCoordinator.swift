@@ -35,6 +35,7 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var lastPhoto: UIImage?
     @Published private(set) var toolEventsLog: [ToolEvent] = []
     @Published private(set) var debugLog: [String] = []
+    @Published private(set) var latestDebugLine = "No debug events yet"
     @Published private(set) var isLoopbackRunning = false
 
     private let glasses: GlassesSession
@@ -63,7 +64,10 @@ final class SessionCoordinator: ObservableObject {
         appendDebug("Starting session")
 
         do {
+            appendDebug("Starting glasses session")
             try await glasses.start()
+            appendDebug("Glasses session ready")
+            appendDebug("Connecting to backend")
             try await backend.connect()
             try await backend.send(.hello(Hello(sessionResume: sessionResumeToken)))
             startReceiveLoop()
@@ -214,6 +218,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private func appendDebug(_ line: String) {
+        latestDebugLine = line
         debugLog.insert(line, at: 0)
         if debugLog.count > 100 {
             debugLog.removeLast(debugLog.count - 100)

@@ -16,11 +16,6 @@ struct MetaGlassesAgentApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .onOpenURL { url in
-                    Task {
-                        _ = try? await Wearables.shared.handleUrl(url)
-                    }
-                }
         }
     }
 }

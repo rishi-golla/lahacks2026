@@ -34,7 +34,7 @@ final class AudioPipeline {
         progress("Loopback: configuring audio session")
         try configureAudioSession()
         progress("Loopback: starting playback engine")
-        try player.start()
+        try player.start(sampleRate: Int(MicCapture.targetSampleRate))
 
         let lock = NSLock()
         var captured = Data()
