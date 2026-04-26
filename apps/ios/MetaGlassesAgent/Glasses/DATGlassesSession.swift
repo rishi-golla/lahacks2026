@@ -284,6 +284,11 @@ final class DATGlassesSession: GlassesSession {
                 "underlying: \(underlying.domain) (\(underlying.code)) \(underlying.localizedDescription)"
             )
         }
+        if reflected.contains("internalError") {
+            parts.append(
+                "hint: SDK uses internalError when details are hidden; check Xcode console (filter: MediaStreamSession, ActivityManager, XMS) and try restarting glasses + Meta AI app."
+            )
+        }
         return parts.joined(separator: " · ")
     }
 
