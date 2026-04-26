@@ -217,12 +217,14 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
                 {"intent": "who is this", "name": "Alice", "organization": "Acme", "title": "Engineer"},
             )
             await adapter._handle_server_message(response, sender)
+            await asyncio.sleep(0)
 
         self.assertEqual(len(session.tool_response_calls), 1)
         fn_resp = session.tool_response_calls[0][0]
         self.assertEqual(fn_resp.id, "call-1")
         self.assertEqual(fn_resp.name, "agent")
-        self.assertIn("Alice is a software engineer", fn_resp.response["output"])
+        self.assertIn("started that for you", fn_resp.response["output"].lower())
+        mock_loop.run_once.assert_awaited()
 
     async def test_agent_tool_call_uses_backend_channel_submit_when_available(self) -> None:
         session = _FakeGeminiSession()
@@ -250,6 +252,7 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         await adapter._handle_server_message(response, sender, request_session)
+        await asyncio.sleep(0)
 
         adapter._backend_channel.submit.assert_awaited_once()
         task = adapter._backend_channel.submit.await_args.args[0]
@@ -263,7 +266,7 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(session.tool_response_calls), 1)
         output = session.tool_response_calls[0][0].response["output"]
-        self.assertIn("Alice is a software engineer", output)
+        self.assertIn("started that for you", output.lower())
 
     async def test_agent_tool_call_sends_started_and_result_tool_events_to_ios(self) -> None:
         session = _FakeGeminiSession()
@@ -284,13 +287,14 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "call-2", "agent", {"intent": "identify_person", "name": "Bob"},
             )
             await adapter._handle_server_message(response, sender)
+            await asyncio.sleep(0)
 
         tool_events = [m for m in sender.messages if m.get("type") == "tool_event"]
         self.assertEqual(len(tool_events), 2)
         self.assertEqual(tool_events[0]["phase"], "started")
         self.assertEqual(tool_events[0]["tool_call_id"], "call-2")
         self.assertEqual(tool_events[1]["phase"], "result")
-        self.assertEqual(tool_events[1]["result_summary"], "Bob is a product manager.")
+        self.assertIn("started that for you", tool_events[1]["result_summary"].lower())
 
     async def test_google_protected_action_prompts_for_identity_confirmation(self) -> None:
         google_state_store.set_active_user(
@@ -329,7 +333,7 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
         adapter = _build_adapter(session)
         await adapter.open(SessionContext(), _hello_payload(), sender)
 
-        # Future that never resolves — will trigger wait_for timeout
+        # Future that never resolves — background wait_for can time out; user still gets immediate copy.
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
 
         mock_loop = AsyncMock()
@@ -344,7 +348,7 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(session.tool_response_calls), 1)
         output = session.tool_response_calls[0][0].response["output"]
-        self.assertIn("timed out", output.lower())
+        self.assertIn("started that for you", output.lower())
 
     async def test_agent_tool_call_omegaclaw_unavailable_sends_fallback_function_response(self) -> None:
         session = _FakeGeminiSession()

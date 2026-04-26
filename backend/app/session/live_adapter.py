@@ -49,6 +49,12 @@ from .settings import LiveBackend, SessionSettings, get_session_settings
 
 log = logging.getLogger(__name__)
 
+# Return immediately to Gemini while OmegaClaw runs in the background; user only hears
+# that work has started, not the final skill result.
+_AGENT_TOOL_QUEUED_OUTPUT = (
+    "I've started that for you; the agent is working on it in the background."
+)
+
 
 @dataclass(slots=True)
 class _FallbackHttpOptions:
@@ -124,6 +130,9 @@ def _system_instruction(*, google_search_grounding: bool) -> str:
             "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
             "- To describe the scene: call agent(intent='describe_scene', "
             "image_context='brief text description of what you see').\n"
+            "- To send or draft email (when the user wants mail handled through the agent pipeline): use an "
+            "email-related intent such as 'send an email' or 'draft an email' and pass "
+            "command, recipient, subject, body, or natural-language phrasing the backend can use.\n"
             "Do not use agent(intent='google_search') for general web questions when built-in search "
             "can answer; reserve it only if the user explicitly needs the backend search path.\n\n"
         )
@@ -134,14 +143,17 @@ def _system_instruction(*, google_search_grounding: bool) -> str:
             "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
             "- To describe the scene: call agent(intent='describe_scene', "
             "image_context='brief text description of what you see').\n"
-            "- To search the web: call agent(intent='google_search', query=...).\n\n"
+            "- To search the web: call agent(intent='google_search', query=...).\n"
+            "- To send or draft email: use an email-related intent and pass command, recipient, subject, "
+            "or body (e.g. agent(intent='send an email to a@b.com with subject X', recipient=..., subject=...)).\n\n"
         )
     ack = (
         "Before calling agent, always speak a brief acknowledgment first so the user knows you "
         "heard them and work is in progress — for example: "
         "\"Got it, looking that up,\" before a search or agent handoff; "
         "\"One sec, checking who that is,\" for identify_person; "
-        "\"Let me describe what I'm seeing,\" for describe_scene. "
+        "\"Let me describe what I'm seeing,\" for describe_scene; "
+        "\"On it, drafting that for you\" when sending or drafting email. "
         "Never call agent silently; the backend may take several seconds.\n\n"
         "For general conversation or questions you can answer directly without tools, do not call agent. "
         "Keep spoken responses short and natural — the user cannot see a screen."
@@ -557,47 +569,26 @@ class GeminiLiveAdapter:
             result = begin_protected_action(intent, {k: str(v) for k, v in args.items()})
             summary = result["summary"]
         elif self._backend_channel is not None and _GlassesTask is not None and session is not None:
-            try:
-                result = await self._backend_channel.submit(
-                    _GlassesTask(
-                        session_id=session.session_id,
-                        turn_id=call_id,
-                        intent=intent,
-                        tool_call_id=call_id,
-                        args=args,
-                    )
-                )
-                summary = (
-                    result.get("summary")
-                    or result.get("description")
-                    or str(result)
-                )
-            except Exception as exc:  # noqa: BLE001
-                summary = "I had trouble completing that request."
-                log.exception("gemini live adapter backend channel failed intent=%s: %s", intent, exc)
+            summary = _AGENT_TOOL_QUEUED_OUTPUT
+            asyncio.create_task(
+                self._background_backend_channel_submit(
+                    call_id=call_id,
+                    intent=intent,
+                    args=args,
+                    session=session,
+                ),
+                name=f"agent-backend-submit-{call_id[:16]}",
+            )
         else:
-            try:
-                request_id, fut = _omegaclaw_enqueue({
-                    "intent": intent,
-                    "args": args,
-                })
-                await self._agent_loop.run_once()
-                response_payload = await asyncio.wait_for(fut, timeout=10.0)
-                result = response_payload.get("result", {})
-                if isinstance(result, dict):
-                    summary = (
-                        result.get("summary")
-                        or result.get("description")
-                        or str(result)
-                    )
-                else:
-                    summary = str(result)
-            except asyncio.TimeoutError:
-                summary = "The request timed out. Please try again."
-                log.warning("gemini live adapter agent tool timed out intent=%s", intent)
-            except Exception as exc:  # noqa: BLE001
-                summary = "I had trouble completing that request."
-                log.exception("gemini live adapter agent tool failed intent=%s: %s", intent, exc)
+            summary = _AGENT_TOOL_QUEUED_OUTPUT
+            asyncio.create_task(
+                self._background_omegaclaw_enqueue(
+                    call_id=call_id,
+                    intent=intent,
+                    args=args,
+                ),
+                name=f"agent-omegaclaw-enqueue-{call_id[:16]}",
+            )
 
         log.info("gemini live adapter agent tool result intent=%s summary=%r", intent, summary[:120])
 
@@ -616,6 +607,71 @@ class GeminiLiveAdapter:
                 function_responses=[
                     self._function_response(id=call_id, name="agent", output=summary)
                 ]
+            )
+
+    async def _background_backend_channel_submit(
+        self,
+        *,
+        call_id: str,
+        intent: str,
+        args: dict[str, Any],
+        session: SessionContext,
+    ) -> None:
+        if self._backend_channel is None or _GlassesTask is None:
+            return
+        try:
+            await self._backend_channel.submit(
+                _GlassesTask(
+                    session_id=session.session_id,
+                    turn_id=call_id,
+                    intent=intent,
+                    tool_call_id=call_id,
+                    args=args,
+                )
+            )
+            log.info(
+                "gemini live adapter background backend submit completed intent=%s",
+                intent,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception(
+                "gemini live adapter background backend submit failed intent=%s: %s",
+                intent,
+                exc,
+            )
+
+    async def _background_omegaclaw_enqueue(
+        self,
+        *,
+        call_id: str,
+        intent: str,
+        args: dict[str, Any],
+    ) -> None:
+        if not _omegaclaw_available or self._agent_loop is None or _omegaclaw_enqueue is None:
+            return
+        try:
+            _request_id, fut = _omegaclaw_enqueue(
+                {
+                    "intent": intent,
+                    "args": args,
+                }
+            )
+            await self._agent_loop.run_once()
+            await asyncio.wait_for(fut, timeout=10.0)
+            log.info(
+                "gemini live adapter background omegaclaw enqueue completed intent=%s",
+                intent,
+            )
+        except asyncio.TimeoutError:
+            log.warning(
+                "gemini live adapter background omegaclaw enqueue timed out intent=%s",
+                intent,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception(
+                "gemini live adapter background omegaclaw enqueue failed intent=%s: %s",
+                intent,
+                exc,
             )
 
     @staticmethod
@@ -648,14 +704,20 @@ class GeminiLiveAdapter:
                         name="agent",
                         description=(
                             "Route a specialist task to the OmegaClaw backend. "
-                            "Use for person identification, scene description, or web search."
+                            "Use for person identification, scene description, web search, or sending or drafting email "
+                            "(e.g. natural language about email, or fields like recipient, subject, body). "
+                            "The return value is an immediate acknowledgment that the request was started; it is not the "
+                            "final result of the long-running task—tell the user work is in progress, not a detailed outcome."
                         ),
                         parameters=genai_types.Schema(
                             type=genai_types.Type.OBJECT,
                             properties={
                                 "intent": genai_types.Schema(
                                     type=genai_types.Type.STRING,
-                                    description="What the user wants, e.g. 'identify_person', 'describe_scene', 'google_search'",
+                                    description=(
+                                        "What the user wants. Examples: 'identify_person', 'describe_scene', 'google_search'; "
+                                        "or an email task such as 'send an email', 'draft email to ...', or 'gmail'."
+                                    ),
                                 ),
                                 "name": str_schema,
                                 "organization": str_schema,
@@ -668,10 +730,22 @@ class GeminiLiveAdapter:
                                     type=genai_types.Type.STRING,
                                     description="Search query for google_search",
                                 ),
-                                "recipient": str_schema,
-                                "subject": str_schema,
-                                "body": str_schema,
-                                "command": str_schema,
+                                "recipient": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="For email: recipient address (when user specified).",
+                                ),
+                                "subject": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="For email: subject line (when user specified).",
+                                ),
+                                "body": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="For email: message body (when user specified).",
+                                ),
+                                "command": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="For email: e.g. send, draft, or a short user intent string.",
+                                ),
                                 "datetime": str_schema,
                                 "details": str_schema,
                                 "title_text": genai_types.Schema(

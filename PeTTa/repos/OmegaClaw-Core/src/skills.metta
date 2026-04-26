@@ -14,6 +14,7 @@
     "- Search the web: search string"
     "- Search the web using the Tavily Search Agent: tavily-search string"
     "- Get technical analysis for a stock ticker using the Technical Analysis Agent: technical-analysis ticker"
+    "- Send or draft email via the LA Hacks mail uAgent: mail-sending-agent string_in_quotes"
     "- Echo a short diagnostic string for LA Hacks bridge smoke tests: lahacks-echo string_in_quotes"
     ;CODE EXECUTION:
     "- Execute MeTTa expression: metta sexpression"
@@ -57,6 +58,9 @@
 
 (= (lahacks-echo $s)
    (py-call (lahacks_skills.echo_for_task $s)))
+
+(= (mail-sending-agent $p)
+   (py-call (agentverse.mail_sending_agent $p)))
 
 !(import_prolog_functions_from_file (library OmegaClaw-Core ./src/skills.pl) (shell first_char))
 
