@@ -33,6 +33,9 @@ async def invoke_remote_skill(skill_name: str, args: dict) -> dict:
     if endpoint:
         url = endpoint
         payload = {"args": args, "agent_address": cfg.get("agent_address", "")}
+    elif cfg.get("agent_address"):
+        url = f"{AGENTVERSE_SKILL_URL}/v1/chat/completions"
+        payload = {"args": args, "agent_address": cfg.get("agent_address", "")}
     elif skill_name == "identify_person":
         url = f"{AGENTVERSE_SKILL_URL}/v1/chat/completions"
         payload = {
@@ -178,22 +181,30 @@ async def _invoke_with_retry(
     return _fallback_response(skill_name, last_error)
 
 def _fallback_response(skill_name: str, error: str) -> dict:
+    service_hint = _local_skill_service_hint(error)
     if skill_name == "identify_person":
-        return {"summary": "I could not find information on that person right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not find information on that person right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "google_search":
-        return {"summary": "I could not run Google search right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not run Google search right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "google_calendar":
-        return {"summary": "I could not access Google Calendar right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not access Google Calendar right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "gmail":
-        return {"summary": "I could not access Gmail right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not access Gmail right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "people_search_agent":
-        return {"summary": "I could not run the people search agent right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not run the people search agent right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "mail_sending_agent":
-        return {"summary": "I could not run the mail sending agent right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not run the mail sending agent right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "task_scheduling_agent":
-        return {"summary": "I could not run the task scheduling agent right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not run the task scheduling agent right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "reminder_agent":
-        return {"summary": "I could not run the reminder agent right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not run the reminder agent right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "purchase_agent":
-        return {"summary": "I could not run the purchase agent right now.", "confidence": "low", "source": "fallback", "error": error}
-    return {"description": "I could not describe the scene right now.", "confidence": "low", "source": "fallback", "error": error}
+        return {"summary": f"I could not run the purchase agent right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
+    return {"description": f"I could not describe the scene right now.{service_hint}", "confidence": "low", "source": "fallback", "error": error}
+
+
+def _local_skill_service_hint(error: str) -> str:
+    lowered = str(error).lower()
+    if "connection" in lowered or "refused" in lowered:
+        return f" Start the local skill bridge at {AGENTVERSE_SKILL_URL}."
+    return ""

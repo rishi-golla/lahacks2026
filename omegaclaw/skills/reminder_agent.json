@@ -7,7 +7,7 @@
     "remember to",
     "reminder for later"
   ],
-  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "agent_address": "agent1qv37fkpxaeu538vxp2axmafehh7krvganh0ygqdnrnck35xpjdatwt6rult",
   "input_schema": {
     "command": "string",
     "datetime": "string",

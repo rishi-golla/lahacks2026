@@ -42,6 +42,7 @@ class OmegaClawAgentLoop:
 
         requested_skill_name = str(message.get("skill_name") or "")
         skill_name = requested_skill_name or self._classify(intent, args)
+        args = self._normalize_args(skill_name, intent, args)
         if skill_name == "unknown" or (requested_skill_name and skill_name not in self._KNOWN_SKILLS):
             result = {
                 "summary": "I don't have a matching skill for that request yet.",
@@ -57,7 +58,7 @@ class OmegaClawAgentLoop:
                 error="no_matching_skill",
             )
         else:
-            if skill_name == "identify_person":
+            if skill_name in {"identify_person", "reminder_agent"}:
                 result = await invoke_local_skill_shim(skill_name=skill_name, args=args)
             else:
                 result = await invoke_remote_skill(skill_name=skill_name, args=args)
@@ -73,6 +74,18 @@ class OmegaClawAgentLoop:
 
         my_backend.send_message(json.dumps(response))
         return True
+
+    @staticmethod
+    def _normalize_args(skill_name: str, intent: str, args: dict[str, Any]) -> dict[str, Any]:
+        if skill_name == "reminder_agent" and not any(
+            args.get(field) for field in ("command", "datetime", "details")
+        ):
+            return {
+                "command": intent,
+                "datetime": "",
+                "details": "",
+            }
+        return args
 
     @staticmethod
     def _classify(intent: str, args: dict[str, Any]) -> str:

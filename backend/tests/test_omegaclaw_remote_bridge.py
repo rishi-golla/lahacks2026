@@ -136,6 +136,25 @@ class RemoteBridgeTests(unittest.TestCase):
         result = asyncio.run(_run())
         self.assertEqual(result["summary"], "ok")
 
+    def test_remote_skill_uses_agent_address_for_generic_skill_config(self) -> None:
+        async def _run() -> None:
+            cfg = {"agent_address": "agent1qtest", "timeout_ms": 5000}
+            with patch.object(bridge, "load_skill_config", return_value=cfg), patch.object(
+                bridge,
+                "_invoke_with_retry",
+                return_value={"summary": "ok", "confidence": "high"},
+            ) as mocked:
+                await bridge.invoke_remote_skill(
+                    "mail_sending_agent",
+                    {"command": "send", "recipient": "b@example.com", "subject": "Hi", "body": "Body"},
+                )
+                mocked.assert_awaited_once()
+                args = mocked.await_args.args
+                self.assertEqual(args[0], "http://localhost:8001/v1/chat/completions")
+                self.assertEqual(args[1], {"args": {"command": "send", "recipient": "b@example.com", "subject": "Hi", "body": "Body"}, "agent_address": "agent1qtest"})
+
+        asyncio.run(_run())
+
     def test_later_wrappers_route_to_expected_skill_names(self) -> None:
         async def _run() -> None:
             with patch.object(bridge, "invoke_remote_skill", return_value={"summary": "ok"}) as mocked:
@@ -178,6 +197,12 @@ class RemoteBridgeTests(unittest.TestCase):
         self.assertIn("people", people["summary"].lower())
         self.assertIn("reminder", reminder["summary"].lower())
         self.assertEqual(gmail["confidence"], "low")
+
+    def test_fallback_response_mentions_local_skill_service_when_connection_fails(self) -> None:
+        reminder = bridge._fallback_response("reminder_agent", "All connection attempts failed")  # noqa: SLF001
+
+        self.assertIn("localhost:8001", reminder["summary"])
+        self.assertEqual(reminder["error"], "All connection attempts failed")
 
     def test_invoke_remote_skill_uses_skill_timeout_override(self) -> None:
         async def _run() -> None:
