@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -11,6 +13,42 @@ from app.session.resume_store import InMemoryResumeStore, RestoreOutcome, TurnSt
 
 
 class SessionCoordinatorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_photo_dump_writes_received_jpeg_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _FakeWebSocket(
+                [
+                    _message(
+                        {
+                            "type": "hello",
+                            "client": "ios",
+                            "client_version": "0.1.0",
+                            "device": "iphone-mock",
+                            "capabilities": {
+                                "audio_in": True,
+                                "audio_out": True,
+                                "photo": True,
+                                "barge_in": True,
+                            },
+                        }
+                    ),
+                    _message(
+                        {
+                            "type": "photo",
+                            "jpeg_b64": "/9j/",
+                            "trigger": "user_request",
+                            "ts_ms": 123,
+                        }
+                    ),
+                ]
+            )
+
+            await SessionCoordinator(live_adapter=_LookAdapter(), photo_dump_dir=tmpdir).run(ws)
+
+            dumped_files = list(Path(tmpdir).glob("session-*/*.jpg"))
+            self.assertEqual(len(dumped_files), 1)
+            self.assertEqual(dumped_files[0].name, "123-user_request.jpg")
+            self.assertEqual(dumped_files[0].read_bytes(), b"\xff\xd8\xff")
+
     async def test_tool_look_photo_is_correlated_before_reaching_adapter(self) -> None:
         adapter = _LookAdapter()
         store = InMemoryResumeStore()

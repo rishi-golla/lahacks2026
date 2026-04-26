@@ -28,6 +28,8 @@ enum GlassesSessionError: Error, Equatable {
     case cameraPermissionDenied
     case cameraPermissionUnavailable(String)
     case notImplemented
+    /// `UIImage` could not read bytes from the glasses (often truncated or non-JPEG data).
+    case photoDecodeFailed(byteCount: Int)
 }
 
 extension GlassesSessionError: LocalizedError {
@@ -49,6 +51,8 @@ extension GlassesSessionError: LocalizedError {
             return "Could not check glasses camera permission: \(message). Make sure Bluetooth is on, the glasses are paired, and DAT registration is granted."
         case .notImplemented:
             return "This glasses feature is not implemented yet."
+        case .photoDecodeFailed(let n):
+            return "Could not decode photo from glasses (\(n) bytes). The capture may be truncated or corrupt."
         }
     }
 }
