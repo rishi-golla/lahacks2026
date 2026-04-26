@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 from unittest.mock import patch
 
 
@@ -20,6 +21,7 @@ from agents.reminder_agent import (  # noqa: E402
     ReminderRequest,
     ReminderResponse,
     TextContent,
+    extract_reminder_request,
     handle_message,
     handle_reminder_request,
 )
@@ -40,11 +42,18 @@ class _FakeContext:
 
 
 class ReminderAgentProtocolTests(unittest.TestCase):
+    def test_extract_reminder_request_falls_back_without_asi_key(self) -> None:
+        with patch("agents.reminder_core._get_asi_client", side_effect=RuntimeError("Missing required environment variable: ASI1_API_KEY")):
+            payload = extract_reminder_request("Remind me in 5 seconds to stretch")
+
+        self.assertEqual(payload["details"], "stretch")
+        self.assertIn("in 5 seconds", payload["datetime"])
+
     def test_handle_message_acknowledges_and_returns_spoken_confirmation(self) -> None:
         ctx = _FakeContext()
         msg = ChatMessage(
             timestamp=None,
-            msg_id="msg-1",
+            msg_id=uuid4(),
             content=[TextContent(type="text", text="Remind me tomorrow at 9 to stretch")],
         )
 

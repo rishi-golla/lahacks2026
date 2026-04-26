@@ -7,7 +7,7 @@
     "draft an email",
     "send mail"
   ],
-  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "agent_address": "agent1qw6d5mxr6dsw859yxuuk8zg8wgg9j8x9ss230upu6z72pv60hvyyuuwhyaz",
   "input_schema": {
     "command": "string",
     "recipient": "string",

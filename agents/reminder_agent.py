@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+from agents.reminder_core import extract_reminder_request, parse_datetime
 
 try:
     from uagents import Agent, Context, Model, Protocol
@@ -85,40 +87,31 @@ class ReminderResponse(Model):
     status: str
 
 
-def _require_env(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
+async def _schedule_reminder(ctx: Context, recipient: str, reminder_time: datetime, details: str):
+    """Schedule a reminder to be sent at the specified time."""
+    now = datetime.now(UTC)
+    if reminder_time <= now:
+        # If time is in the past, send immediately
+        delay = 0
+    else:
+        delay = (reminder_time - now).total_seconds()
 
+    await asyncio.sleep(delay)
 
-def _get_asi_client() -> Any:
-    from openai import OpenAI
-
-    return OpenAI(base_url="https://api.asi1.ai/v1", api_key=_require_env("ASI1_API_KEY"))
-
-
-def extract_reminder_request(text: str, *, client: Any | None = None) -> dict[str, str]:
-    llm_client = client or _get_asi_client()
-    response = llm_client.chat.completions.create(
-        model="asi1",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Extract a reminder request into JSON with datetime and details. "
-                    "Return only JSON."
-                ),
-            },
-            {"role": "user", "content": text},
-        ],
-        max_tokens=300,
-    )
-    parsed = json.loads(str(response.choices[0].message.content))
-    return {
-        "datetime": str(parsed.get("datetime", "")),
-        "details": str(parsed.get("details", "")),
-    }
+    try:
+        ctx.logger.info("Sending scheduled reminder", extra={"recipient": recipient, "details": details, "delay": delay})
+        await ctx.send(
+            recipient,
+            ChatMessage(
+                timestamp=datetime.now(UTC),
+                msg_id=uuid4(),
+                content=[
+                    TextContent(type="text", text=f"Reminder: {details}"),
+                ],
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        ctx.logger.exception("Failed to send scheduled reminder")
 
 
 agent = Agent(
@@ -130,6 +123,7 @@ agent = Agent(
 )
 
 protocol = Protocol(spec=chat_protocol_spec)
+request_protocol = Protocol()
 
 
 @protocol.on_message(ChatMessage)
@@ -146,13 +140,22 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
 
     try:
         payload = extract_reminder_request(text)
-        if not payload.get("details", "").strip():
+        details = payload.get("details", "").strip()
+        datetime_str = payload.get("datetime", "").strip()
+
+        if not details:
             response_text = "What should I remind you about?"
         else:
-            response_text = (
-                f"Done — I set a reminder for {payload.get('datetime', 'the requested time')} "
-                f"to {payload['details']}."
-            )
+            reminder_time = parse_datetime(datetime_str) if datetime_str else None
+            if reminder_time:
+                # Schedule the actual reminder
+                asyncio.create_task(_schedule_reminder(ctx, sender, reminder_time, details))
+                time_str = reminder_time.strftime("%Y-%m-%d %H:%M")
+                response_text = f"Done — I set a reminder for {time_str} to {details}."
+            else:
+                # No valid time, but we have details - remind immediately.
+                asyncio.create_task(_schedule_reminder(ctx, sender, datetime.now(UTC), details))
+                response_text = f"Done — I set a reminder for now to {details}."
     except Exception:  # noqa: BLE001
         ctx.logger.exception("Error handling reminder request")
         response_text = "I couldn't set that reminder right now."
@@ -170,7 +173,12 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     )
 
 
-@protocol.on_message(ReminderRequest, replies={ReminderResponse, ErrorMessage})
+@protocol.on_message(ChatAcknowledgement)
+async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
+    return None
+
+
+@request_protocol.on_message(ReminderRequest, replies={ReminderResponse, ErrorMessage})
 async def handle_reminder_request(ctx: Context, sender: str, msg: ReminderRequest):
     try:
         payload = extract_reminder_request(msg.prompt)
@@ -196,6 +204,7 @@ async def handle_reminder_request(ctx: Context, sender: str, msg: ReminderReques
 
 
 agent.include(protocol, publish_manifest=True)
+agent.include(request_protocol, publish_manifest=True)
 
 
 if __name__ == "__main__":

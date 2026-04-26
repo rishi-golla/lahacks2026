@@ -60,6 +60,57 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
 
         self.assertTrue(asyncio.run(_run()))
 
+    def test_run_once_populates_reminder_command_from_intent_when_args_missing(self) -> None:
+        loop = OmegaClawAgentLoop()
+        inbound = {
+            "request_id": "req-reminder",
+            "tool_call_id": "tc-reminder",
+            "intent": "Remind me tomorrow at 9 to stretch",
+            "args": {},
+        }
+
+        async def _run() -> None:
+            mocked_shim = AsyncMock(return_value={"summary": "ok", "confidence": "high"})
+            with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
+                "omegaclaw.runtime_loop.invoke_local_skill_shim", mocked_shim
+            ), patch("omegaclaw.runtime_loop.my_backend.send_message"):
+                did_work = await loop.run_once()
+                self.assertTrue(did_work)
+                mocked_shim.assert_awaited_once_with(
+                    skill_name="reminder_agent",
+                    args={
+                        "command": "Remind me tomorrow at 9 to stretch",
+                        "datetime": "",
+                        "details": "",
+                    },
+                )
+
+        asyncio.run(_run())
+
+    def test_run_once_uses_local_shim_for_reminder_agent(self) -> None:
+        loop = OmegaClawAgentLoop()
+        inbound = {
+            "request_id": "req-reminder-local",
+            "tool_call_id": "tc-reminder-local",
+            "intent": "Remind me in 5 seconds to stretch",
+            "args": {},
+        }
+
+        async def _run() -> None:
+            mocked_shim = AsyncMock(return_value={"summary": "Done", "confidence": "high"})
+            mocked_remote = AsyncMock(return_value={"summary": "should-not-run"})
+            with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
+                "omegaclaw.runtime_loop.invoke_local_skill_shim", mocked_shim
+            ), patch("omegaclaw.runtime_loop.invoke_remote_skill", mocked_remote), patch(
+                "omegaclaw.runtime_loop.my_backend.send_message"
+            ):
+                did_work = await loop.run_once()
+                self.assertTrue(did_work)
+                mocked_shim.assert_awaited_once()
+                mocked_remote.assert_not_awaited()
+
+        asyncio.run(_run())
+
     def test_run_once_uses_local_shim_for_flagship_identify_person(self) -> None:
         loop = OmegaClawAgentLoop()
         inbound = {
