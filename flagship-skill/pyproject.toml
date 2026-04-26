@@ -1,14 +1,14 @@
 [project]
-name = "browserbase-purchase-agent"
+name = "local-chrome-purchase-agent"
 version = "0.1.0"
-description = "ASI:One-compatible Agentverse agent with a Browserbase-backed Amazon checkout review skill."
+description = "ASI:One-compatible Agentverse agent that drives local Playwright MCP for Amazon checkout review."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.110.0",
+    "google-genai>=1.0.0",
     "httpx>=0.27.0",
+    "mcp>=1.13.0",
     "pydantic>=2.0.0",
-    "stagehand>=0.6.0",
     "uagents>=0.17.0",
     "uvicorn>=0.30.0",
 ]
@@ -20,7 +20,6 @@ dev = [
 
 [project.scripts]
 purchase-agent = "agent:agent.run"
-purchase-worker = "browserbase_worker:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -29,10 +28,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 only-include = [
     "agent.py",
-    "browserbase_purchase.py",
-    "browserbase_worker.py",
     "models.py",
     "purchase_client.py",
+    "purchase_prompt.py",
+    "purchase_rules.py",
 ]
 
 [tool.pytest.ini_options]
@@ -40,5 +39,5 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-p no:cacheprovider"
 markers = [
-    "integration: real Browserbase or running-worker integration tests",
+    "integration: real local Chrome or MCP integration tests",
 ]

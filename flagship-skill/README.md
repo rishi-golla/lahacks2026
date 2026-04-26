@@ -1,95 +1,59 @@
-# ASI:One Browserbase Purchase Agent
+# ASI:One Playwright MCP Purchase Agent
 
-This package contains a standalone ASI:One-compatible Agentverse agent for product purchasing assistance. It accepts product metadata, calls a Browserbase-backed worker, searches Amazon, adds the best match to cart, and stops at checkout review.
+This package contains a standalone ASI:One-compatible Agentverse agent for product purchasing assistance. It accepts product metadata, asks Gemini to drive a local browser through the stock Playwright MCP server, searches Amazon, adds the selected match to cart, and stops at checkout review.
 
 It does not place orders.
 
 ## Files
 
 - `agent.py` - ASI:One Agent Chat Protocol agent for Agentverse upload.
-- `browserbase_worker.py` - FastAPI worker that runs Browserbase automation.
-- `browserbase_purchase.py` - Stagehand + Browserbase Amazon flow.
+- `purchase_client.py` - Playwright MCP HTTP client plus Gemini tool loop.
+- `purchase_prompt.py` - browser workflow and safety prompt.
+- `purchase_rules.py` - deterministic query/candidate helper rules.
 - `models.py` - typed request/result models.
-- `purchase_client.py` - small HTTP client used by the agent.
 
 ## Environment
-
-Agent:
 
 ```env
 AGENT_SEED=replace-with-agent-seed
 AGENT_PORT=8001
 AGENT_ENDPOINT=https://your-public-agent-endpoint/submit
-PURCHASE_WORKER_URL=https://your-worker.example.com/v1/purchase/review
+
+PLAYWRIGHT_MCP_URL=http://127.0.0.1:8931/mcp
+PLAYWRIGHT_MCP_TIMEOUT_S=180
+
+GEMINI_API_KEY=replace-with-gemini-api-key
+PURCHASE_AGENT_MODEL=gemini-2.5-flash
+
+AMAZON_URL=https://www.amazon.com
+PURCHASE_MAX_TOTAL_USD=
 ```
 
-Worker:
+`MODEL_API_KEY` is still accepted as a fallback for the Gemini key so older local `.env` files keep working.
 
-```env
-BROWSERBASE_API_KEY=...
-BROWSERBASE_PROJECT_ID=...
-BROWSERBASE_CONTEXT_ID=...
-BROWSERBASE_USE_PROXY=0
-BROWSERBASE_PROXY_CITY=
-BROWSERBASE_PROXY_STATE=
-BROWSERBASE_PROXY_COUNTRY=
-MODEL_API_KEY=...
-STAGEHAND_MODEL_NAME=google/gemini-3-flash-preview
-PURCHASE_MAX_TOTAL_USD=optional_default_guard
-PURCHASE_WORKER_PORT=8003
+## Local Browser Setup
+
+Start the stock Playwright MCP server in a separate terminal:
+
+```powershell
+npx @playwright/mcp@latest --port 8931 --browser=chrome
 ```
 
-The worker uses Stagehand for the browser automation. The Browserbase context must already be logged into Amazon with shipping and payment configured.
+Playwright MCP owns the browser automation surface. This package does not define custom MCP tools such as `get_products` or `buy_product`; the purchase workflow lives in the agent prompt and uses the generic Playwright MCP tools.
 
-## Browserbase Context Setup
-
-You need to create one persistent Browserbase context before live purchase tests will work:
-
-1. In Browserbase, create a new browser context and copy its context ID.
-2. Start a Browserbase session with that context using Live View.
-3. Open the Live View URL and manually log into Amazon.
-4. Complete any MFA, passkey, account challenge, or shipping/payment prompts by hand.
-5. End the session so the context persists cookies, local storage, and Amazon login state.
-6. Put the copied context ID in `.env` as `BROWSERBASE_CONTEXT_ID`.
-
-The code starts every Stagehand session with:
-
-```json
-{
-  "browserSettings": {
-    "context": {
-      "id": "BROWSERBASE_CONTEXT_ID",
-      "persist": true
-    }
-  }
-}
-```
-
-If `BROWSERBASE_USE_PROXY=1`, the code also sends proxy settings:
-
-```json
-{
-  "proxies": [
-    {
-      "type": "browserbase",
-      "geolocation": {
-        "city": "New York",
-        "state": "NY",
-        "country": "US"
-      }
-    }
-  ]
-}
-```
-
-Only enable `BROWSERBASE_USE_PROXY` on a Browserbase plan that includes proxies. Change the `BROWSERBASE_PROXY_*` values if your Amazon account normally logs in from a different region. If Amazon asks for MFA during a run, open the Browserbase session recording/live view, complete the challenge, then rerun.
+By default, Playwright MCP runs in headed mode with a persistent profile. Sign in to Amazon in that browser profile before asking the agent to prepare a checkout review.
 
 ## Run Locally
 
 ```bash
 uv sync
-uv run purchase-worker
 uv run purchase-agent
+```
+
+If `uv` cannot access its global cache on Windows, use the existing virtualenv directly:
+
+```powershell
+.\.venv\Scripts\python.exe agent.py
 ```
 
 ## Register on Agentverse
@@ -101,28 +65,6 @@ For a local mailbox registration, leave `AGENT_ENDPOINT` unset, run the agent, o
 For the Agentverse **Launch an Agent -> Connect Agent -> Chat Protocol** flow, set `AGENT_ENDPOINT` to a public `/submit` URL that points at this running agent. Do not use `127.0.0.1` for Agentverse registration because Agentverse cannot reach your local loopback address.
 
 Keep `AGENT_SEED` stable once registered. Changing it creates a different agent address.
-
-Run tests:
-
-```bash
-uv run pytest
-```
-
-Run real Browserbase integration tests:
-
-```bash
-set LIVE_BROWSERBASE=1
-set LIVE_PURCHASE_DESCRIPTION=USB-C charging cable 6ft
-set LIVE_PURCHASE_MAX_PRICE=15
-uv run pytest tests/test_browserbase_worker.py -m integration
-```
-
-Run the purchase-agent payload test against actual local Stagehand:
-
-```bash
-set LIVE_BROWSERBASE=1
-uv run pytest tests/test_purchase_agent.py -m integration
-```
 
 ## Request Shape
 
@@ -139,21 +81,20 @@ The agent accepts either JSON or natural language. JSON is preferred:
 }
 ```
 
+## Tests
+
+```bash
+uv run pytest
+```
+
+Run the live Playwright MCP smoke test only when the MCP HTTP server is already running:
+
+```powershell
+$env:LIVE_PLAYWRIGHT_MCP="1"
+$env:PLAYWRIGHT_MCP_URL="http://127.0.0.1:8931/mcp"
+.\.venv\Scripts\python.exe -m pytest tests/test_purchase_mcp_server.py -m integration
+```
+
 ## Safety
 
-The Browserbase flow intentionally stops at checkout review. The implementation never clicks a final place-order button.
-
-
-## Runnning it
-
-```
-cd flagship-skill
-python agent.py
-```
-
-in separate terminal:
-
-```
-cd flagship-skill
-uv run purchase-worker
-```
+The local browser flow intentionally stops at checkout review. The prompt explicitly forbids placing, submitting, completing, confirming, or finalizing an order.

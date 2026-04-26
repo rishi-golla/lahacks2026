@@ -1,4 +1,4 @@
-"""Typed request and result models for the Browserbase purchase agent."""
+"""Typed request and result models for the local Playwright MCP purchase agent."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 PurchaseStatus = Literal["review_ready", "needs_auth", "not_found", "ambiguous", "blocked", "error"]
+ProductSearchStatus = Literal["products_ready", "needs_auth", "blocked", "error"]
 Confidence = Literal["high", "medium", "low"]
 
 
@@ -60,8 +61,20 @@ class PurchaseItemResult(BaseModel):
     price: str | float | None = None
     quantity: int = 1
     checkout_url: str | None = None
-    browserbase_session_id: str | None = None
-    recording_url: str | None = None
+    automation_session_id: str | None = None
+    browser_profile: str | None = None
+    candidates: list[ProductCandidate] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ProductSearchResult(BaseModel):
+    status: ProductSearchStatus
+    summary: str
+    confidence: Confidence = "low"
+    quantity: int = 1
+    search_url: str | None = None
+    automation_session_id: str | None = None
+    browser_profile: str | None = None
     candidates: list[ProductCandidate] = Field(default_factory=list)
     error: str | None = None
 
