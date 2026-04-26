@@ -270,6 +270,58 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fn_resp.name, "unsupported_tool")
         self.assertIn("Unknown function", fn_resp.response["output"])
 
+    async def test_look_tool_call_requests_fresh_visual_context(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        response = _live_response_with_tool_call(
+            "look-1",
+            "look",
+            {"reason": "Read the badge text"},
+        )
+        await adapter._handle_server_message(response, sender)
+
+        self.assertEqual(
+            sender.look_requests,
+            [{"tool_call_id": "look-1", "reason": "Read the badge text", "timeout_ms": None}],
+        )
+        tool_events = [m for m in sender.messages if m.get("type") == "tool_event"]
+        self.assertEqual(tool_events[0]["phase"], "started")
+        self.assertEqual(tool_events[0]["name"], "look")
+        self.assertEqual(session.tool_response_calls, [])
+
+    async def test_tool_look_photo_completes_look_function_response_after_forwarding_image(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        await adapter.handle_client_message(
+            SessionContext(),
+            {
+                "type": "photo",
+                "jpeg_b64": "/9j/",
+                "trigger": "tool_look",
+                "tool_call_id": "look-2",
+                "ts_ms": 42,
+                "look_request": {
+                    "tool_call_id": "look-2",
+                    "state": "fulfilled",
+                    "reason": "Need fresh visual context",
+                },
+            },
+            sender,
+        )
+
+        self.assertEqual(session.realtime_input_calls[0]["video"].data, b"\xff\xd8\xff")
+        self.assertEqual(len(session.tool_response_calls), 1)
+        fn_resp = session.tool_response_calls[0][0]
+        self.assertEqual(fn_resp.id, "look-2")
+        self.assertEqual(fn_resp.name, "look")
+        self.assertIn("attached", fn_resp.response["output"].lower())
+
     async def test_server_messages_are_emitted_through_sender_contract(self) -> None:
         session = _FakeGeminiSession(
             responses=[
@@ -342,6 +394,7 @@ class _FakeSender:
         self.messages: list[dict[str, object]] = []
         self.events: list[tuple[str, dict[str, object]]] = []
         self.completed_turns = 0
+        self.look_requests: list[dict[str, object]] = []
 
     async def send(self, payload: dict[str, object]) -> None:
         self.messages.append(payload)
@@ -362,6 +415,9 @@ class _FakeSender:
         reason: str,
         timeout_ms: int | None = None,
     ):
+        self.look_requests.append(
+            {"tool_call_id": tool_call_id, "reason": reason, "timeout_ms": timeout_ms}
+        )
         return SimpleNamespace(tool_call_id=tool_call_id, reason=reason, timeout_ms=timeout_ms)
 
     async def send_session_update(

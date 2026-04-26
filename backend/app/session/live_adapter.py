@@ -103,10 +103,14 @@ class _FallbackFunctionResponse:
 _SYSTEM_INSTRUCTION = (
     "You are a hands-free assistant for smart glasses. "
     "Treat incoming realtime image/video frames as the user's current point-of-view camera feed. "
-    "Answer visual questions directly from the frame when one is present.\n\n"
-    "You have an 'agent' function that routes specialist tasks to backend skills. Use it:\n"
+    "Answer visual questions directly from the frame when one is present. "
+    "If the user asks about who or what they are looking at, asks you to read text, "
+    "or needs a precise visual answer, call the 'look' function first to request a fresh still image.\n\n"
+    "You have an 'agent' function that routes specialist tasks to backend skills and a "
+    "'look' function that requests a fresh still image. Use them like this:\n"
+    "- For precise visual context: call look(reason='what detail you need to inspect').\n"
     "- To identify a person: if a badge is visible, extract name, organization, and title, "
-    "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
+    "after a fresh look if needed, then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
     "- To describe the scene: call agent(intent='describe_scene', "
     "image_context='brief text description of what you see').\n"
     "- To search the web: call agent(intent='google_search', query=...).\n\n"
@@ -240,6 +244,7 @@ class GeminiLiveAdapter:
                 trigger=message.get("trigger"),
                 tool_call_id=message.get("tool_call_id"),
             )
+            await self._complete_pending_look_tool_call(message, sender)
             return
         if message_type == "barge_in":
             log.info("gemini live adapter barge-in session_id=%s", session.session_id)
@@ -456,6 +461,8 @@ class GeminiLiveAdapter:
 
         if name == "agent":
             await self._handle_agent_tool_call(fc_id, args, sender)
+        elif name == "look":
+            await self._handle_look_tool_call(fc_id, args, sender)
         else:
             log.warning("gemini live adapter unhandled function call name=%s", name)
             if self._live_session is not None:
@@ -529,6 +536,57 @@ class GeminiLiveAdapter:
                 ]
             )
 
+    async def _handle_look_tool_call(self, call_id: str, args: dict[str, Any], sender: SessionSender) -> None:
+        reason = str(args.get("reason") or "Need fresh visual context")
+        log.info("gemini live adapter look tool reason=%s", reason)
+
+        await sender.send(
+            {
+                "type": "tool_event",
+                "tool_call_id": call_id,
+                "name": "look",
+                "phase": "started",
+                "args": {"reason": reason},
+            }
+        )
+        await sender.send_look_request(tool_call_id=call_id, reason=reason)
+
+    async def _complete_pending_look_tool_call(
+        self,
+        message: dict[str, Any],
+        sender: SessionSender,
+    ) -> None:
+        look_request = message.get("look_request")
+        if not isinstance(look_request, dict):
+            return
+
+        tool_call_id = look_request.get("tool_call_id")
+        state = str(look_request.get("state") or "")
+        if not isinstance(tool_call_id, str) or not tool_call_id or state != "fulfilled":
+            return
+
+        result_summary = "Fresh photo captured and attached."
+        await sender.send(
+            {
+                "type": "tool_event",
+                "tool_call_id": tool_call_id,
+                "name": "look",
+                "phase": "result",
+                "result_summary": result_summary,
+            }
+        )
+
+        if self._live_session is not None:
+            await self._live_session.send_tool_response(
+                function_responses=[
+                    self._function_response(
+                        id=tool_call_id,
+                        name="look",
+                        output=result_summary,
+                    )
+                ]
+            )
+
     @staticmethod
     def _decode_base64(value: str, *, field_name: str) -> bytes:
         try:
@@ -550,11 +608,28 @@ class GeminiLiveAdapter:
 
     @staticmethod
     def _make_agent_tool() -> Any:
-        """Build the 'agent' function declaration for Gemini Live."""
+        """Build the Gemini Live tool declarations."""
         if genai_types is not None:
             str_schema = genai_types.Schema(type=genai_types.Type.STRING)
             return genai_types.Tool(
                 function_declarations=[
+                    genai_types.FunctionDeclaration(
+                        name="look",
+                        description=(
+                            "Request a fresh still image from the glasses when you need "
+                            "better visual detail before answering."
+                        ),
+                        parameters=genai_types.Schema(
+                            type=genai_types.Type.OBJECT,
+                            properties={
+                                "reason": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="What visual detail you need to inspect in the fresh image",
+                                ),
+                            },
+                            required=["reason"],
+                        ),
+                    ),
                     genai_types.FunctionDeclaration(
                         name="agent",
                         description=(
@@ -588,6 +663,10 @@ class GeminiLiveAdapter:
         # Fallback (no-op when genai_types unavailable)
         return _FallbackTool(
             function_declarations=[
+                _FallbackFunctionDeclaration(
+                    name="look",
+                    description="Request a fresh still image from the glasses.",
+                ),
                 _FallbackFunctionDeclaration(
                     name="agent",
                     description="Route a specialist task to OmegaClaw.",
