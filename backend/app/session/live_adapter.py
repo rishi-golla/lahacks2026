@@ -28,10 +28,14 @@ if _PROJECT_ROOT not in sys.path:
 
 try:
     from omegaclaw.channels.my_backend import enqueue_message as _omegaclaw_enqueue
+    from omegaclaw.channels.backend_channel import BackendChannel as _BackendChannel
+    from omegaclaw.channels.backend_channel import GlassesTask as _GlassesTask
     from omegaclaw.runtime_loop import OmegaClawAgentLoop as _OmegaClawAgentLoop
     _omegaclaw_available = True
 except ImportError:  # pragma: no cover
     _omegaclaw_enqueue = None
+    _BackendChannel = None
+    _GlassesTask = None
     _OmegaClawAgentLoop = None
     _omegaclaw_available = False
 
@@ -175,6 +179,7 @@ class GeminiLiveAdapter:
         self._receive_task: asyncio.Task[None] | None = None
         self._closing = False
         self._agent_loop = _OmegaClawAgentLoop() if _omegaclaw_available else None
+        self._backend_channel = _BackendChannel() if _BackendChannel is not None else None
         if not _omegaclaw_available:
             log.warning("gemini live adapter omegaclaw not available — agent tool calls will return fallback")
 
@@ -365,7 +370,7 @@ class GeminiLiveAdapter:
         if tool_call is not None:
             function_calls = getattr(tool_call, "function_calls", None) or []
             for fc in function_calls:
-                await self._handle_function_call(fc, sender)
+                await self._handle_function_call(fc, sender, session)
 
         server_content = getattr(response, "server_content", None)
         if server_content is None:
@@ -442,7 +447,12 @@ class GeminiLiveAdapter:
         if getattr(server_content, "turn_complete", False):
             await sender.complete_output_turn()
 
-    async def _handle_function_call(self, fc: Any, sender: SessionSender) -> None:
+    async def _handle_function_call(
+        self,
+        fc: Any,
+        sender: SessionSender,
+        session: SessionContext | None = None,
+    ) -> None:
         name = str(getattr(fc, "name", "") or "")
         args = dict(getattr(fc, "args", {}) or {})
         fc_id = str(getattr(fc, "id", "") or "")
@@ -450,7 +460,7 @@ class GeminiLiveAdapter:
         log.info("gemini live adapter function_call name=%s id=%s args=%s", name, fc_id, args)
 
         if name == "agent":
-            await self._handle_agent_tool_call(fc_id, args, sender)
+            await self._handle_agent_tool_call(fc_id, args, sender, session)
         else:
             log.warning("gemini live adapter unhandled function call name=%s", name)
             if self._live_session is not None:
@@ -464,7 +474,13 @@ class GeminiLiveAdapter:
                     ]
                 )
 
-    async def _handle_agent_tool_call(self, call_id: str, args: dict[str, Any], sender: SessionSender) -> None:
+    async def _handle_agent_tool_call(
+        self,
+        call_id: str,
+        args: dict[str, Any],
+        sender: SessionSender,
+        session: SessionContext | None = None,
+    ) -> None:
         intent = str(args.pop("intent", ""))
         log.info("gemini live adapter agent tool intent=%s args=%s", intent, args)
 
@@ -481,6 +497,25 @@ class GeminiLiveAdapter:
         if not _omegaclaw_available or self._agent_loop is None:
             summary = "Agent skills are not available right now."
             log.warning("gemini live adapter agent tool called but omegaclaw not available")
+        elif self._backend_channel is not None and _GlassesTask is not None and session is not None:
+            try:
+                result = await self._backend_channel.submit(
+                    _GlassesTask(
+                        session_id=session.session_id,
+                        turn_id=call_id,
+                        intent=intent,
+                        tool_call_id=call_id,
+                        args=args,
+                    )
+                )
+                summary = (
+                    result.get("summary")
+                    or result.get("description")
+                    or str(result)
+                )
+            except Exception as exc:  # noqa: BLE001
+                summary = "I had trouble completing that request."
+                log.exception("gemini live adapter backend channel failed intent=%s: %s", intent, exc)
         else:
             try:
                 request_id, fut = _omegaclaw_enqueue({
