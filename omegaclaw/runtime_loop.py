@@ -19,6 +19,7 @@ class OmegaClawAgentLoop:
         "describe_scene",
         "google_search",
         "google_calendar",
+        "google_tasks",
         "gmail",
     }
 
@@ -85,6 +86,8 @@ class OmegaClawAgentLoop:
             return "google_search"
         if any(phrase in lowered for phrase in ("calendar", "meeting", "schedule", "event")):
             return "google_calendar"
+        if any(phrase in lowered for phrase in ("task", "todo", "to-do", "remind me", "reminder")):
+            return "google_tasks"
         if any(phrase in lowered for phrase in ("email", "gmail", "send mail", "draft email")):
             return "gmail"
         return "unknown"

@@ -40,6 +40,11 @@ except ImportError:  # pragma: no cover
     _omegaclaw_available = False
 
 from .coordinator import LiveAdapter, SessionContext, SessionSender
+from ..google.actions import (
+    PROTECTED_GOOGLE_INTENTS,
+    begin_protected_action,
+    confirm_pending_action,
+)
 from .settings import LiveBackend, SessionSettings, get_session_settings
 
 log = logging.getLogger(__name__)
@@ -230,6 +235,14 @@ class GeminiLiveAdapter:
             return
 
         if message_type == "text":
+            confirmation_result = confirm_pending_action(message["text"])
+            if confirmation_result is not None:
+                await sender.emit(
+                    "transcript_out",
+                    {"text": confirmation_result["summary"], "is_final": True},
+                )
+                await sender.complete_output_turn()
+                return
             await self._forward_text(message["text"])
             return
         if message_type == "audio":
@@ -497,6 +510,9 @@ class GeminiLiveAdapter:
         if not _omegaclaw_available or self._agent_loop is None:
             summary = "Agent skills are not available right now."
             log.warning("gemini live adapter agent tool called but omegaclaw not available")
+        elif intent in PROTECTED_GOOGLE_INTENTS:
+            result = begin_protected_action(intent, {k: str(v) for k, v in args.items()})
+            summary = result["summary"]
         elif self._backend_channel is not None and _GlassesTask is not None and session is not None:
             try:
                 result = await self._backend_channel.submit(
@@ -608,6 +624,16 @@ class GeminiLiveAdapter:
                                 "query": genai_types.Schema(
                                     type=genai_types.Type.STRING,
                                     description="Search query for google_search",
+                                ),
+                                "recipient": str_schema,
+                                "subject": str_schema,
+                                "body": str_schema,
+                                "command": str_schema,
+                                "datetime": str_schema,
+                                "details": str_schema,
+                                "title_text": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="Task title for google_tasks",
                                 ),
                             },
                             required=["intent"],

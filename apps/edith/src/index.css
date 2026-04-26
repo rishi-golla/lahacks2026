@@ -18,6 +18,8 @@
 :root {
   color: #e1e0cc;
   background: #000000;
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-fill: rgba(8, 8, 8, 0.5);
 }
 
 html {
@@ -51,4 +53,11 @@ a {
 .bg-noise {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 260px 260px;
+}
+
+.glass-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)),
+    var(--glass-fill);
+  backdrop-filter: blur(26px);
 }
