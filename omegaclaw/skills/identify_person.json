@@ -8,7 +8,7 @@
     "tell me about this person",
     "who is that"
   ],
-  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "agent_address": "agent1qdy95pwgw3uvp2vgv8qjpdaykhtpmfcegpwqdk5leh2lg36tpq3c66zggm0",
   "input_schema": {
     "name": "string",
     "organization": "string",

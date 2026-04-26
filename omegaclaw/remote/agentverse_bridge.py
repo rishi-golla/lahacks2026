@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import httpx
 
+from omegaclaw.remote.uagents_bridge import query_identify_person as _uagents_identify
+
 log = logging.getLogger(__name__)
 
 AGENTVERSE_SKILL_URL = os.environ.get("AGENTVERSE_SKILL_URL", "http://localhost:8001")
@@ -58,10 +60,20 @@ async def invoke_remote_skill(skill_name: str, args: dict) -> dict:
 
 
 async def invoke_identify_person(name: str, org: str, title: str) -> dict:
-    return await invoke_remote_skill(
-        "identify_person",
-        {"name": name, "organization": org, "title": title},
-    )
+    cfg = load_skill_config("identify_person")
+    agent_address = cfg.get("agent_address", "")
+    timeout_s = _skill_timeout_seconds(cfg)
+    try:
+        result = await _uagents_identify(
+            name, org, title, timeout=timeout_s, agent_address=agent_address
+        )
+        return {**result, "source": f"agentverse:identify_person"}
+    except Exception as exc:
+        log.warning("uagents_identify failed (%s), falling back to HTTP bridge", exc)
+        return await invoke_remote_skill(
+            "identify_person",
+            {"name": name, "organization": org, "title": title},
+        )
 
 
 async def invoke_describe_scene(image_context: str) -> dict:
