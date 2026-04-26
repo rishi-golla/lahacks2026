@@ -1,3 +1,4 @@
+import Foundation
 import MWDATCamera
 import MWDATCore
 import UIKit
@@ -88,7 +89,7 @@ final class DATGlassesSession: GlassesSession {
 
     func capturePhoto() async throws -> Data {
         guard let streamSession else {
-            throw GlassesSessionError.streamSessionUnavailable
+            throw GlassesSessionError.cameraStreamNotRunning
         }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -247,7 +248,7 @@ final class DATGlassesSession: GlassesSession {
 
         errorListenerToken = stream.errorPublisher.listen { [weak self] error in
             Task { @MainActor in
-                self?.continuation.yield(.error(String(describing: error)))
+                self?.continuation.yield(.error(Self.describeStreamError(error)))
             }
         }
 
@@ -262,6 +263,33 @@ final class DATGlassesSession: GlassesSession {
                 self.photoContinuation = nil
             }
         }
+    }
+
+    /// Include `String(reflecting:)` so enum cases (e.g. `deviceNotConnected(id)`) appear; add NSError for codes.
+    private static func describeStreamError(_ error: Error) -> String {
+        let ns = error as NSError
+        let typeName = String(describing: Swift.type(of: error))
+        // Full case + associated values, unlike `localizedDescription` / NSError code alone.
+        let reflected = String(reflecting: error)
+        var parts: [String] = [reflected, typeName]
+        let desc = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !desc.isEmpty {
+            parts.append(desc)
+        }
+        if !ns.domain.isEmpty {
+            parts.append("NSError domain=\(ns.domain) code=\(ns.code)")
+        }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append(
+                "underlying: \(underlying.domain) (\(underlying.code)) \(underlying.localizedDescription)"
+            )
+        }
+        if reflected.contains("internalError") {
+            parts.append(
+                "hint: SDK uses internalError when details are hidden; check Xcode console (filter: MediaStreamSession, ActivityManager, XMS) and try restarting glasses + Meta AI app."
+            )
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func clearListeners() {

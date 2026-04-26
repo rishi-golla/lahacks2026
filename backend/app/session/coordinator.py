@@ -13,6 +13,7 @@ import binascii
 from dataclasses import asdict, replace
 import json
 import logging
+import os
 from pathlib import Path
 import time
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from uuid import uuid4
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .event_mapper import EventMapperState, complete_output_turn, map_server_event
+from .jpeg_sanity import is_plausible_jpeg
 from .look_loop import LookLoop, LookRequest, UnknownLookRequestError
 from .protocol import (
     ClientMessage,
@@ -356,6 +358,26 @@ class SessionCoordinator:
             Path(photo_dump_dir) if photo_dump_dir is not None else self._configured_photo_dump_dir()
         )
         self._photo_dump_dir = configured_photo_dump_dir
+        self._session_ids_warned_no_photo_dump: set[str] = set()
+        if self._photo_dump_dir is not None:
+            try:
+                self._photo_dump_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                log.error(
+                    "session coordinator photo dump directory not usable path=%s error=%s",
+                    self._photo_dump_dir,
+                    exc,
+                )
+                self._photo_dump_dir = None
+        settings_snapshot = get_session_settings()
+        log.info(
+            "session coordinator init photo_dump=%s env_SESSION_PHOTO_DUMP_DIR=%r settings_SESSION_PHOTO_DUMP_DIR=%r backend_root=%s cwd=%s",
+            str(self._photo_dump_dir) if self._photo_dump_dir is not None else "disabled",
+            os.environ.get("SESSION_PHOTO_DUMP_DIR", ""),
+            settings_snapshot.session_photo_dump_dir,
+            str(BACKEND_ROOT),
+            os.getcwd(),
+        )
 
     async def run(self, ws: WebSocket) -> None:
         await ws.accept()
@@ -527,6 +549,13 @@ class SessionCoordinator:
 
     def _dump_photo_if_enabled(self, session: SessionContext, photo: PhotoFrame) -> None:
         if self._photo_dump_dir is None:
+            if session.session_id not in self._session_ids_warned_no_photo_dump:
+                self._session_ids_warned_no_photo_dump.add(session.session_id)
+                log.warning(
+                    "session photo received but dump is disabled: set SESSION_PHOTO_DUMP_DIR in %s and restart the server. session_id=%s",
+                    BACKEND_ROOT / ".env",
+                    session.session_id,
+                )
             return
 
         try:
@@ -541,13 +570,34 @@ class SessionCoordinator:
             return
 
         dump_dir = self._photo_dump_dir / session.session_id
-        dump_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            dump_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.error("session photo dump mkdir failed path=%s error=%s", dump_dir, exc)
+            return
+
         safe_trigger = "".join(
             character if character.isalnum() or character in {"-", "_"} else "_"
             for character in photo.trigger.value
         )
         path = dump_dir / f"{photo.ts_ms}-{safe_trigger}.jpg"
-        path.write_bytes(photo_bytes)
+        if not is_plausible_jpeg(photo_bytes):
+            log.warning(
+                "session photo dump skipped: not a plausible complete JPEG (bytes=%s). "
+                "The common test stub base64 /9j/ and ts_ms=456 are not real images; "
+                "if you only see that on the server, a test client is hitting /session, not the iOS app. "
+                "session_id=%s trigger=%s ts_ms=%s",
+                len(photo_bytes),
+                session.session_id,
+                photo.trigger.value,
+                photo.ts_ms,
+            )
+            return
+        try:
+            path.write_bytes(photo_bytes)
+        except OSError as exc:
+            log.error("session photo dump write failed path=%s error=%s", path, exc)
+            return
         log.info("session dumped photo session_id=%s path=%s bytes=%s", session.session_id, path, len(photo_bytes))
 
     @staticmethod
