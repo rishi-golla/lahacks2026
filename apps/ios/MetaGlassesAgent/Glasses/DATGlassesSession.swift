@@ -19,6 +19,9 @@ final class DATGlassesSession: GlassesSession {
     private var photoContinuation: CheckedContinuation<Data, Error>?
     private var photoTimeoutTask: Task<Void, Never>?
     private var videoFrameContinuation: AsyncStream<UIImage>.Continuation?
+    /// Target max frames/sec for `videoFrames(at:)`; the SDK stream can be 24fps, so we must throttle here.
+    private var videoFrameTargetFps: Double = 1
+    private var lastVideoFrameYieldUptime: TimeInterval = 0
 
     init(wearables: WearablesInterface = Wearables.shared) {
         self.wearables = wearables
@@ -117,7 +120,9 @@ final class DATGlassesSession: GlassesSession {
     }
 
     func videoFrames(at fps: Double) -> AsyncStream<UIImage> {
-        AsyncStream { continuation in
+        videoFrameTargetFps = max(fps, 0.1)
+        lastVideoFrameYieldUptime = 0
+        return AsyncStream { continuation in
             videoFrameContinuation = continuation
 
             continuation.onTermination = { _ in
@@ -240,8 +245,16 @@ final class DATGlassesSession: GlassesSession {
 
         videoFrameListenerToken = stream.videoFramePublisher.listen { [weak self] frame in
             Task { @MainActor in
-                if let image = frame.makeUIImage() {
-                    self?.videoFrameContinuation?.yield(image)
+                guard let self, let image = frame.makeUIImage() else {
+                    return
+                }
+                // Match `MockGlassesSession`: only yield at most `videoFrameTargetFps` frames per second
+                // (the hardware stream is often 24fps; without this, we spam Gemini and the network.)
+                let minInterval = 1.0 / self.videoFrameTargetFps
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.lastVideoFrameYieldUptime == 0 || now - self.lastVideoFrameYieldUptime >= minInterval {
+                    self.lastVideoFrameYieldUptime = now
+                    self.videoFrameContinuation?.yield(image)
                 }
             }
         }
