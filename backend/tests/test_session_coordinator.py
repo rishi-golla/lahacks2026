@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 import tempfile
@@ -10,6 +11,10 @@ from fastapi import WebSocketDisconnect
 
 from app.session.coordinator import SessionCoordinator
 from app.session.resume_store import InMemoryResumeStore, RestoreOutcome, TurnStateSnapshot
+
+
+_FIXTURE_JPEG = (Path(__file__).parent / "fixtures" / "one_pixel.jpg").read_bytes()
+_FIXTURE_JPEG_B64 = base64.b64encode(_FIXTURE_JPEG).decode()
 
 
 class SessionCoordinatorTests(unittest.IsolatedAsyncioTestCase):
@@ -34,7 +39,7 @@ class SessionCoordinatorTests(unittest.IsolatedAsyncioTestCase):
                     _message(
                         {
                             "type": "photo",
-                            "jpeg_b64": "/9j/",
+                            "jpeg_b64": _FIXTURE_JPEG_B64,
                             "trigger": "user_request",
                             "ts_ms": 123,
                         }
@@ -47,7 +52,7 @@ class SessionCoordinatorTests(unittest.IsolatedAsyncioTestCase):
             dumped_files = list(Path(tmpdir).glob("session-*/*.jpg"))
             self.assertEqual(len(dumped_files), 1)
             self.assertEqual(dumped_files[0].name, "123-user_request.jpg")
-            self.assertEqual(dumped_files[0].read_bytes(), b"\xff\xd8\xff")
+            self.assertEqual(dumped_files[0].read_bytes(), _FIXTURE_JPEG)
 
     async def test_tool_look_photo_is_correlated_before_reaching_adapter(self) -> None:
         adapter = _LookAdapter()

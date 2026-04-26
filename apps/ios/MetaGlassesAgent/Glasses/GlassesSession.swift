@@ -22,7 +22,10 @@ protocol GlassesSession: AnyObject {
 enum GlassesSessionError: Error, Equatable {
     case photoEncodingFailed
     case deviceSessionUnavailable
+    /// `addStream` failed while starting the glasses session (SDK / device issue).
     case streamSessionUnavailable
+    /// No active `StreamSession` — e.g. \"Capture photo\" before **Start Assistant** or after **Stop**.
+    case cameraStreamNotRunning
     case photoCaptureRejected
     case photoCaptureTimedOut
     case cameraPermissionDenied
@@ -40,7 +43,9 @@ extension GlassesSessionError: LocalizedError {
         case .deviceSessionUnavailable:
             return "Could not start a glasses device session."
         case .streamSessionUnavailable:
-            return "Could not start a glasses camera stream."
+            return "Could not start a glasses camera stream (addStream failed during session start)."
+        case .cameraStreamNotRunning:
+            return "The glasses camera stream is not running. Tap Start Assistant and wait until the session is live, then try Capture photo again."
         case .photoCaptureRejected:
             return "The glasses camera rejected the photo capture request."
         case .photoCaptureTimedOut:

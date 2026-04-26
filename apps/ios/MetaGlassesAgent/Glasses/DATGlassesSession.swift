@@ -1,3 +1,4 @@
+import Foundation
 import MWDATCamera
 import MWDATCore
 import UIKit
@@ -88,7 +89,7 @@ final class DATGlassesSession: GlassesSession {
 
     func capturePhoto() async throws -> Data {
         guard let streamSession else {
-            throw GlassesSessionError.streamSessionUnavailable
+            throw GlassesSessionError.cameraStreamNotRunning
         }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -247,7 +248,7 @@ final class DATGlassesSession: GlassesSession {
 
         errorListenerToken = stream.errorPublisher.listen { [weak self] error in
             Task { @MainActor in
-                self?.continuation.yield(.error(String(describing: error)))
+                self?.continuation.yield(.error(Self.describeStreamError(error)))
             }
         }
 
@@ -262,6 +263,26 @@ final class DATGlassesSession: GlassesSession {
                 self.photoContinuation = nil
             }
         }
+    }
+
+    /// `String(describing:)` on Meta stream errors often prints only `internalError`; include NSError details.
+    private static func describeStreamError(_ error: Error) -> String {
+        let ns = error as NSError
+        let typeName = String(describing: Swift.type(of: error))
+        var parts: [String] = [typeName]
+        let desc = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !desc.isEmpty {
+            parts.append(desc)
+        }
+        if !ns.domain.isEmpty {
+            parts.append("NSError domain=\(ns.domain) code=\(ns.code)")
+        }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append(
+                "underlying: \(underlying.domain) (\(underlying.code)) \(underlying.localizedDescription)"
+            )
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func clearListeners() {

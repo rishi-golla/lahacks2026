@@ -42,6 +42,22 @@ class SessionSettings(BaseSettings):
     )
     session_photo_dump_dir: str | None = Field(default=None, alias="SESSION_PHOTO_DUMP_DIR")
 
+    @field_validator("session_photo_dump_dir", mode="before")
+    @classmethod
+    def normalize_photo_dump_dir(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        if not stripped or stripped.lower() in {"none", "null", "off", "0"}:
+            return None
+        if (stripped.startswith('"') and stripped.endswith('"')) or (
+            stripped.startswith("'") and stripped.endswith("'")
+        ):
+            stripped = stripped[1:-1].strip() or None
+        return stripped
+
     @field_validator("gemini_response_modalities", mode="before")
     @classmethod
     def normalize_response_modalities(cls, value: object) -> object:
