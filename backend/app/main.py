@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
-from .routers import health, session
+from .routers import health, omegaclaw_bridge, session
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,3 +12,4 @@ logging.basicConfig(
 app = FastAPI(title="MetaGlassesAgent backend")
 app.include_router(health.router)
 app.include_router(session.router)
+app.include_router(omegaclaw_bridge.router, prefix="/internal/omegaclaw")
