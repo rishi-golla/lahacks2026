@@ -63,6 +63,11 @@ final class DATGlassesSession: GlassesSession {
         streamSession = stream
         setupListeners(for: stream)
         await stream.start()
+        guard await waitForStreamReady(timeoutSeconds: 10) else {
+            await stream.stop()
+            streamSession = nil
+            throw GlassesSessionError.cameraStreamNotReady
+        }
 
         continuation.yield(.ready)
     }
@@ -90,6 +95,9 @@ final class DATGlassesSession: GlassesSession {
     func capturePhoto() async throws -> Data {
         guard let streamSession else {
             throw GlassesSessionError.streamSessionUnavailable
+        }
+        guard await waitForStreamReady(timeoutSeconds: 5) else {
+            throw GlassesSessionError.cameraStreamNotReady
         }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -287,7 +295,7 @@ final class DATGlassesSession: GlassesSession {
         case .paused:
             continuation.yield(.paused)
         case .stopped:
-            continuation.yield(.ready)
+            continuation.yield(.stopped)
         case .waitingForDevice, .starting, .stopping:
             continuation.yield(.connecting)
         }

@@ -23,6 +23,7 @@ enum GlassesSessionError: Error, Equatable {
     case photoEncodingFailed
     case deviceSessionUnavailable
     case streamSessionUnavailable
+    case cameraStreamNotReady
     case photoCaptureRejected
     case photoCaptureTimedOut
     case cameraPermissionDenied
@@ -41,6 +42,8 @@ extension GlassesSessionError: LocalizedError {
             return "Could not start a glasses device session."
         case .streamSessionUnavailable:
             return "Could not start a glasses camera stream."
+        case .cameraStreamNotReady:
+            return "The glasses camera stream is not ready yet. Wait a moment and try again."
         case .photoCaptureRejected:
             return "The glasses camera rejected the photo capture request."
         case .photoCaptureTimedOut:
