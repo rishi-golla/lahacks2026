@@ -45,6 +45,7 @@ from ..google.actions import (
     begin_protected_action,
     confirm_pending_action,
 )
+from ..reminder_local import schedule_local_reminder_if_imminent
 from .settings import LiveBackend, SessionSettings, get_session_settings
 
 log = logging.getLogger(__name__)
@@ -130,6 +131,10 @@ def _system_instruction(*, google_search_grounding: bool) -> str:
             "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
             "- To describe the scene: call agent(intent='describe_scene', "
             "image_context='brief text description of what you see').\n"
+            "- For spoken reminders (remember something later, nudge in N minutes, etc.): do **not** use "
+            "google_tasks unless the user explicitly asked for **Google Tasks**. Use an intent string that contains "
+            "**'remind'** or **'reminder'** (e.g. 'remind me in 5 minutes to drink water') and set `details` "
+            "(and `datetime` when they gave a time). The backend maps that to the Agentverse reminder path.\n"
             "- To send or draft email (when the user wants mail handled through the agent pipeline): use an "
             "email-related intent such as 'send an email' or 'draft an email' and pass "
             "command, recipient, subject, body, or natural-language phrasing the backend can use.\n"
@@ -144,6 +149,9 @@ def _system_instruction(*, google_search_grounding: bool) -> str:
             "- To describe the scene: call agent(intent='describe_scene', "
             "image_context='brief text description of what you see').\n"
             "- To search the web: call agent(intent='google_search', query=...).\n"
+            "- For spoken reminders: do **not** use `google_tasks` unless they explicitly want **Google Tasks** "
+            "(and account is linked). Prefer an intent containing **'remind'** or **'reminder'** plus `details` / "
+            "`datetime` (e.g. 'remind me in 10 minutes to call the lab').\n"
             "- To send or draft email: use an email-related intent and pass command, recipient, subject, "
             "or body (e.g. agent(intent='send an email to a@b.com with subject X', recipient=..., subject=...)).\n\n"
         )
@@ -153,7 +161,8 @@ def _system_instruction(*, google_search_grounding: bool) -> str:
         "\"Got it, looking that up,\" before a search or agent handoff; "
         "\"One sec, checking who that is,\" for identify_person; "
         "\"Let me describe what I'm seeing,\" for describe_scene; "
-        "\"On it, drafting that for you\" when sending or drafting email. "
+        "\"On it, drafting that for you\" when sending or drafting email; "
+        "\"Setting that reminder for you\" when delegating a remind/reminder intent. "
         "Never call agent silently; the backend may take several seconds.\n\n"
         "For general conversation or questions you can answer directly without tools, do not call agent. "
         "Keep spoken responses short and natural — the user cannot see a screen."
@@ -576,6 +585,7 @@ class GeminiLiveAdapter:
                     intent=intent,
                     args=args,
                     session=session,
+                    sender=sender,
                 ),
                 name=f"agent-backend-submit-{call_id[:16]}",
             )
@@ -616,11 +626,20 @@ class GeminiLiveAdapter:
         intent: str,
         args: dict[str, Any],
         session: SessionContext,
+        sender: SessionSender,
     ) -> None:
         if self._backend_channel is None or _GlassesTask is None:
             return
+        # uAgent follow-ups go to the skill bridge, not the glasses; short delays get a
+        # WebSocket `reminder_due` in parallel so the user actually sees a nudge.
+        schedule_local_reminder_if_imminent(
+            intent=intent,
+            args=dict(args),
+            session_id=session.session_id,
+            sender=sender,
+        )
         try:
-            await self._backend_channel.submit(
+            out = await self._backend_channel.submit(
                 _GlassesTask(
                     session_id=session.session_id,
                     turn_id=call_id,
@@ -629,10 +648,20 @@ class GeminiLiveAdapter:
                     args=args,
                 )
             )
-            log.info(
-                "gemini live adapter background backend submit completed intent=%s",
-                intent,
-            )
+            if isinstance(out, dict):
+                log.info(
+                    "gemini live adapter background backend submit completed intent=%s source=%r summary=%r err=%r",
+                    intent,
+                    out.get("source"),
+                    (str(out.get("summary", ""))[:200] if out.get("summary") is not None else None),
+                    out.get("error"),
+                )
+            else:
+                log.info(
+                    "gemini live adapter background backend submit completed intent=%s out=%r",
+                    intent,
+                    out,
+                )
         except Exception as exc:  # noqa: BLE001
             log.exception(
                 "gemini live adapter background backend submit failed intent=%s: %s",
@@ -704,8 +733,9 @@ class GeminiLiveAdapter:
                         name="agent",
                         description=(
                             "Route a specialist task to the OmegaClaw backend. "
-                            "Use for person identification, scene description, web search, or sending or drafting email "
-                            "(e.g. natural language about email, or fields like recipient, subject, body). "
+                            "Use for person identification, scene description, web search, sending or drafting email, or "
+                            "time-based reminders. For normal spoken reminders, use an intent that includes the words "
+                            "'remind' or 'reminder' and pass details (see intent field) — not google_tasks. "
                             "The return value is an immediate acknowledgment that the request was started; it is not the "
                             "final result of the long-running task—tell the user work is in progress, not a detailed outcome."
                         ),
@@ -716,7 +746,11 @@ class GeminiLiveAdapter:
                                     type=genai_types.Type.STRING,
                                     description=(
                                         "What the user wants. Examples: 'identify_person', 'describe_scene', 'google_search'; "
-                                        "or an email task such as 'send an email', 'draft email to ...', or 'gmail'."
+                                        "email: 'send an email', 'draft an email to ...', 'gmail'. "
+                                        "For a generic reminder, the string must include 'remind' or 'reminder' "
+                                        "(e.g. 'remind me in 5 minutes to take a break' or 'set a reminder: water plants'). "
+                                        "Do **not** set intent to 'google_tasks' for ordinary reminders; that is only for "
+                                        "the user's **Google** task list and requires a linked Google account."
                                     ),
                                 ),
                                 "name": str_schema,
@@ -746,11 +780,26 @@ class GeminiLiveAdapter:
                                     type=genai_types.Type.STRING,
                                     description="For email: e.g. send, draft, or a short user intent string.",
                                 ),
-                                "datetime": str_schema,
-                                "details": str_schema,
+                                "datetime": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description=(
+                                        "Time for scheduling or reminders: ISO-8601 or a phrase the backend can parse "
+                                        "(e.g. 'in 5 minutes', 'tomorrow at 9am')."
+                                    ),
+                                ),
+                                "details": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description=(
+                                        "For reminder intents: what to remember (e.g. 'stand up and stretch'). "
+                                        "For calendar-style requests: event description. Optional if the full intent is enough."
+                                    ),
+                                ),
                                 "title_text": genai_types.Schema(
                                     type=genai_types.Type.STRING,
-                                    description="Task title for google_tasks",
+                                    description=(
+                                        "Only for intent 'google_tasks' (Google's task list; requires a linked account). "
+                                        "Do not use for generic 'remind me' flows — use a remind/reminder intent and `details`."
+                                    ),
                                 ),
                             },
                             required=["intent"],

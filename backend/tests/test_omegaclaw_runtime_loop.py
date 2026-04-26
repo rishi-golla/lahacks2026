@@ -70,13 +70,13 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
         }
 
         async def _run() -> None:
-            mocked_shim = AsyncMock(return_value={"summary": "ok", "confidence": "high"})
+            mocked_remote = AsyncMock(return_value={"summary": "ok", "confidence": "high"})
             with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
-                "omegaclaw.runtime_loop.invoke_local_skill_shim", mocked_shim
+                "omegaclaw.runtime_loop.invoke_remote_skill", mocked_remote
             ), patch("omegaclaw.runtime_loop.my_backend.send_message"):
                 did_work = await loop.run_once()
                 self.assertTrue(did_work)
-                mocked_shim.assert_awaited_once_with(
+                mocked_remote.assert_awaited_once_with(
                     skill_name="reminder_agent",
                     args={
                         "command": "Remind me tomorrow at 9 to stretch",
@@ -87,7 +87,7 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
 
         asyncio.run(_run())
 
-    def test_run_once_uses_local_shim_for_reminder_agent(self) -> None:
+    def test_run_once_uses_remote_for_reminder_agent(self) -> None:
         loop = OmegaClawAgentLoop()
         inbound = {
             "request_id": "req-reminder-local",
@@ -97,8 +97,8 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
         }
 
         async def _run() -> None:
-            mocked_shim = AsyncMock(return_value={"summary": "Done", "confidence": "high"})
-            mocked_remote = AsyncMock(return_value={"summary": "should-not-run"})
+            mocked_shim = AsyncMock(return_value={"summary": "should-not-run"})
+            mocked_remote = AsyncMock(return_value={"summary": "Done", "confidence": "high"})
             with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
                 "omegaclaw.runtime_loop.invoke_local_skill_shim", mocked_shim
             ), patch("omegaclaw.runtime_loop.invoke_remote_skill", mocked_remote), patch(
@@ -106,8 +106,8 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
             ):
                 did_work = await loop.run_once()
                 self.assertTrue(did_work)
-                mocked_shim.assert_awaited_once()
-                mocked_remote.assert_not_awaited()
+                mocked_remote.assert_awaited_once()
+                mocked_shim.assert_not_awaited()
 
         asyncio.run(_run())
 

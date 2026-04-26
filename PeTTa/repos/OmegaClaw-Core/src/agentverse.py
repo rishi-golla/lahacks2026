@@ -186,10 +186,15 @@ def mail_sending_agent(prompt: str, timeout: int = 120) -> str:
 
 
 def reminder_agent(prompt: str, timeout: int = 120) -> str:
+    """Use sync-first ``_ask_agent`` so a ``ReminderResponse`` (or error) is returned
+    when Agentverse delivers a valid sync Envelope. Falls back to async (no in-band
+    body) on sync/mailbox quirks — same as other remote skills, but unlike *mail* we
+    *prefer* the reply for confirmation when possible.
+    """
     try:
         request = ReminderRequest(prompt=prompt)
         return asyncio.run(
-            _ask_agent_async_only(REMINDER_AGENT_ADDRESS, request, int(timeout))
+            _ask_agent(REMINDER_AGENT_ADDRESS, request, int(timeout))
         )
     except Exception as e:
         return f"error: {e}"

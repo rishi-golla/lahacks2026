@@ -54,14 +54,20 @@ class OmegaClawChannelTests(unittest.TestCase):
         async def _run() -> dict:
             channel = BackendChannel()
             with patch(
-                "omegaclaw.skills.shims._schedule_local_reminder",
-                new=AsyncMock(return_value=None),
+                "omegaclaw.runtime_loop.invoke_remote_skill",
+                new=AsyncMock(
+                    return_value={
+                        "summary": "Done — I set a reminder for 2026-04-26 12:40 to stretch.",
+                        "confidence": "high",
+                        "source": "agentverse:reminder_agent",
+                    }
+                ),
             ):
                 return await channel.submit(task)
 
         result = asyncio.run(_run())
         self.assertEqual(result["confidence"], "high")
-        self.assertIn("set a reminder", result["summary"].lower())
+        self.assertIn("reminder", result["summary"].lower())
 
     def test_channel_contract_queue_roundtrip(self) -> None:
         my_backend.start_my_backend(backend_url="ws://localhost")

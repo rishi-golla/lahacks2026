@@ -58,7 +58,10 @@ class OmegaClawAgentLoop:
                 error="no_matching_skill",
             )
         else:
-            if skill_name in {"identify_person", "reminder_agent"}:
+            # Reminders use the remote Agentverse agent (omegaclaw/skills/reminder_agent.json) so
+            # scheduling and delivery go through the same uAgent path; the old local shim only slept
+            # and never nudged the user.
+            if skill_name == "identify_person":
                 result = await invoke_local_skill_shim(skill_name=skill_name, args=args)
             else:
                 result = await invoke_remote_skill(skill_name=skill_name, args=args)
