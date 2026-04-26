@@ -37,6 +37,10 @@ struct PhotoCapture {
 
     func captureJPEG(from glasses: GlassesSession) async throws -> Data {
         let data = try await glasses.capturePhoto()
+        return try normalizeJPEGData(data)
+    }
+
+    func normalizeJPEGData(_ data: Data) throws -> Data {
         guard let image = UIImage(data: data) else {
             throw GlassesSessionError.photoDecodeFailed(byteCount: data.count)
         }

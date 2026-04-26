@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import hashlib
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -48,6 +49,12 @@ class SessionCoordinatorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(dumped_files), 1)
             self.assertEqual(dumped_files[0].name, "123-user_request.jpg")
             self.assertEqual(dumped_files[0].read_bytes(), b"\xff\xd8\xff")
+            metadata = json.loads(dumped_files[0].with_suffix(".json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["bytes"], 3)
+            self.assertEqual(metadata["base64_chars"], 4)
+            self.assertEqual(metadata["trigger"], "user_request")
+            self.assertEqual(metadata["first_bytes_hex"], "ff d8 ff")
+            self.assertEqual(metadata["sha256"], hashlib.sha256(b"\xff\xd8\xff").hexdigest())
 
     async def test_tool_look_photo_is_correlated_before_reaching_adapter(self) -> None:
         adapter = _LookAdapter()

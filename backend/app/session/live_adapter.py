@@ -8,6 +8,7 @@ import binascii
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass
+import hashlib
 import logging
 import re
 import sys
@@ -304,9 +305,13 @@ class GeminiLiveAdapter:
         tool_call_id: str | None = None,
     ) -> None:
         jpeg_bytes = self._decode_base64(jpeg_b64, field_name="jpeg_b64")
+        digest = hashlib.sha256(jpeg_bytes).hexdigest()
+        first_bytes = jpeg_bytes[:12].hex(" ")
         log.info(
-            "gemini live adapter forwarding photo bytes=%s trigger=%s tool_call_id=%s",
+            "gemini live adapter forwarding photo bytes=%s sha256=%s first_bytes=%s trigger=%s tool_call_id=%s",
             len(jpeg_bytes),
+            digest,
+            first_bytes,
             trigger,
             tool_call_id,
         )

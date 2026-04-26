@@ -1,5 +1,6 @@
 import MWDATCamera
 import MWDATCore
+import CryptoKit
 import UIKit
 
 @MainActor
@@ -254,6 +255,14 @@ final class DATGlassesSession: GlassesSession {
         photoDataListenerToken = stream.photoDataPublisher.listen { [weak self] photo in
             Task { @MainActor in
                 guard let self else {
+                    return
+                }
+                guard UIImage(data: photo.data) != nil else {
+                    let digest = SHA256.hash(data: photo.data).map { String(format: "%02x", $0) }.joined()
+                    let firstBytes = photo.data.prefix(12).map { String(format: "%02x", $0) }.joined(separator: " ")
+                    self.continuation.yield(
+                        .error("Ignoring invalid photo payload from DAT (\(photo.data.count) bytes, sha256=\(digest), firstBytes=\(firstBytes))")
+                    )
                     return
                 }
                 self.photoTimeoutTask?.cancel()

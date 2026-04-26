@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 from dataclasses import asdict, replace
 import json
 import logging
@@ -548,7 +549,34 @@ class SessionCoordinator:
         )
         path = dump_dir / f"{photo.ts_ms}-{safe_trigger}.jpg"
         path.write_bytes(photo_bytes)
-        log.info("session dumped photo session_id=%s path=%s bytes=%s", session.session_id, path, len(photo_bytes))
+        digest = hashlib.sha256(photo_bytes).hexdigest()
+        first_bytes = photo_bytes[:12].hex(" ")
+        metadata_path = path.with_suffix(".json")
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "session_id": session.session_id,
+                    "trigger": photo.trigger.value,
+                    "tool_call_id": photo.tool_call_id,
+                    "ts_ms": photo.ts_ms,
+                    "bytes": len(photo_bytes),
+                    "base64_chars": len(photo.jpeg_b64),
+                    "sha256": digest,
+                    "first_bytes_hex": first_bytes,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        log.info(
+            "session dumped photo session_id=%s path=%s bytes=%s sha256=%s first_bytes=%s",
+            session.session_id,
+            path,
+            len(photo_bytes),
+            digest,
+            first_bytes,
+        )
 
     @staticmethod
     def _client_label(ws: WebSocket) -> str:

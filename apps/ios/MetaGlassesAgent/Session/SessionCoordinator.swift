@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import UIKit
 
 @MainActor
@@ -144,6 +145,7 @@ final class SessionCoordinator: ObservableObject {
             lastPhoto = UIImage(data: jpeg)
             let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .userRequest)
             appendDebug("Manual photo captured: \(jpeg.count) bytes via \(glassesSourceLabel)")
+            appendDebug(photoDiagnosticsLine(prefix: "Manual photo ready", jpeg: jpeg, trigger: .userRequest))
             try await backend.send(.photo(message))
             appendDebug("Manual photo sent: trigger=\(message.trigger.rawValue), ts=\(message.timestampMs)")
         } catch {
@@ -257,6 +259,14 @@ final class SessionCoordinator: ObservableObject {
             lastPhoto = UIImage(data: jpeg)
             let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .toolLook, toolCallID: request.toolCallID)
             appendDebug("look_request photo captured: \(jpeg.count) bytes via \(glassesSourceLabel)")
+            appendDebug(
+                photoDiagnosticsLine(
+                    prefix: "look_request photo ready",
+                    jpeg: jpeg,
+                    trigger: .toolLook,
+                    toolCallID: request.toolCallID
+                )
+            )
             try await backend.send(.photo(message))
             appendDebug("look_request photo sent: id=\(request.toolCallID), trigger=\(message.trigger.rawValue)")
         } catch {
@@ -380,7 +390,7 @@ final class SessionCoordinator: ObservableObject {
             do {
                 let rawPhoto = try await glasses.capturePhoto()
                 let capturedImage = UIImage(data: rawPhoto)
-                let jpeg = try capturedImage.map { try photoCapture.resizeAndEncode($0) } ?? rawPhoto
+                let jpeg = try photoCapture.normalizeJPEGData(rawPhoto)
                 await sendAutoVisualJPEG(jpeg, previewImage: capturedImage)
             } catch is CancellationError {
                 break
@@ -407,6 +417,7 @@ final class SessionCoordinator: ObservableObject {
         }
         let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .auto)
         appendDebug("Auto visual frame prepared: \(jpeg.count) bytes via \(glassesSourceLabel)")
+        appendDebug(photoDiagnosticsLine(prefix: "Auto visual frame ready", jpeg: jpeg, trigger: .auto))
 
         do {
             try await backend.send(.photo(message))
@@ -510,5 +521,17 @@ final class SessionCoordinator: ObservableObject {
         case .error(let message):
             return "error - \(message)"
         }
+    }
+
+    private func photoDiagnosticsLine(
+        prefix: String,
+        jpeg: Data,
+        trigger: PhotoTrigger,
+        toolCallID: String? = nil
+    ) -> String {
+        let digest = SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined()
+        let firstBytes = jpeg.prefix(12).map { String(format: "%02x", $0) }.joined(separator: " ")
+        let suffix = toolCallID.map { ", toolCallID=\($0)" } ?? ""
+        return "\(prefix): trigger=\(trigger.rawValue), bytes=\(jpeg.count), sha256=\(digest), firstBytes=\(firstBytes)\(suffix)"
     }
 }
