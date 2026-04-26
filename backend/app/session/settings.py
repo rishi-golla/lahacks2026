@@ -40,6 +40,14 @@ class SessionSettings(BaseSettings):
         default=("AUDIO",),
         alias="GEMINI_RESPONSE_MODALITIES",
     )
+    gemini_live_google_search_enabled: bool = Field(
+        default=True,
+        alias="GEMINI_LIVE_GOOGLE_SEARCH_ENABLED",
+        description=(
+            "When True, register Gemini Live built-in Google Search (grounding) alongside the "
+            "agent function. Set False if your model/API combo rejects the tool."
+        ),
+    )
     session_photo_dump_dir: str | None = Field(default=None, alias="SESSION_PHOTO_DUMP_DIR")
 
     @field_validator("session_photo_dump_dir", mode="before")

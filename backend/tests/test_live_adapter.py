@@ -69,6 +69,34 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(config.input_audio_transcription)
         self.assertIsNotNone(config.output_audio_transcription)
 
+    async def test_live_connect_includes_google_search_tool_when_enabled(self) -> None:
+        session = _FakeGeminiSession()
+        client = _FakeGenaiClient(session)
+        adapter = _build_adapter(session, client=client, google_search_grounding=True)
+        sender = _FakeSender()
+
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        config = client.aio.live.connected_configs[-1]
+        self.assertEqual(len(config.tools), 2)
+        self.assertIsNotNone(config.tools[0].google_search)
+        self.assertIsNotNone(config.tools[1].function_declarations)
+        self.assertIn("built-in Google Search", config.system_instruction)
+
+    async def test_live_connect_omits_google_search_tool_when_disabled(self) -> None:
+        session = _FakeGeminiSession()
+        client = _FakeGenaiClient(session)
+        adapter = _build_adapter(session, client=client, google_search_grounding=False)
+        sender = _FakeSender()
+
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        config = client.aio.live.connected_configs[-1]
+        self.assertEqual(len(config.tools), 1)
+        self.assertIsNone(getattr(config.tools[0], "google_search", None))
+        self.assertIsNotNone(config.tools[0].function_declarations)
+        self.assertNotIn("built-in Google Search", config.system_instruction)
+
     async def test_audio_messages_are_forwarded_as_realtime_audio(self) -> None:
         session = _FakeGeminiSession()
         adapter = _build_adapter(session)
@@ -352,13 +380,17 @@ def _build_adapter(
     *,
     client: _FakeGenaiClient | None = None,
     response_modalities: tuple[str, ...] = ("TEXT",),
+    google_search_grounding: bool | None = None,
 ) -> GeminiLiveAdapter:
+    kwargs: dict[str, Any] = {
+        "live_backend": LiveBackend.GEMINI,
+        "gemini_api_key": "test-key",
+        "gemini_response_modalities": response_modalities,
+    }
+    if google_search_grounding is not None:
+        kwargs["gemini_live_google_search_enabled"] = google_search_grounding
     return GeminiLiveAdapter(
-        SessionSettings(
-            live_backend=LiveBackend.GEMINI,
-            gemini_api_key="test-key",
-            gemini_response_modalities=response_modalities,
-        ),
+        SessionSettings(**kwargs),
         client_factory=lambda **_: client or _FakeGenaiClient(session),
     )
 

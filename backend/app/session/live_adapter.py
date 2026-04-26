@@ -103,25 +103,45 @@ class _FallbackFunctionResponse:
     response: dict
 
 
-_SYSTEM_INSTRUCTION = (
-    "You are a hands-free assistant for smart glasses. "
-    "Treat incoming realtime image/video frames as the user's current point-of-view camera feed. "
-    "Answer visual questions directly from the frame when one is present.\n\n"
-    "You have an 'agent' function that routes specialist tasks to backend skills. Use it:\n"
-    "- To identify a person: if a badge is visible, extract name, organization, and title, "
-    "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
-    "- To describe the scene: call agent(intent='describe_scene', "
-    "image_context='brief text description of what you see').\n"
-    "- To search the web: call agent(intent='google_search', query=...).\n\n"
-    "Before calling agent, always speak a brief acknowledgment first so the user knows you "
-    "heard them and work is in progress — for example: "
-    "\"Got it, looking that up,\" then agent for search; "
-    "\"One sec, checking who that is,\" for identify_person; "
-    "\"Let me describe what I'm seeing,\" for describe_scene. "
-    "Never call agent silently; the backend may take several seconds.\n\n"
-    "For general conversation or questions you can answer directly, do not call agent. "
-    "Keep spoken responses short and natural — the user cannot see a screen."
-)
+def _system_instruction(*, google_search_grounding: bool) -> str:
+    """Session system text for Gemini Live (grounding changes search routing)."""
+    base = (
+        "You are a hands-free assistant for smart glasses. "
+        "Treat incoming realtime image/video frames as the user's current point-of-view camera feed. "
+        "Answer visual questions directly from the frame when one is present.\n\n"
+    )
+    if google_search_grounding:
+        grounding = (
+            "You have built-in Google Search for public web lookups, facts, news, and general questions. "
+            "Prefer it for those — you do not need the agent tool for ordinary web search.\n\n"
+            "You have an 'agent' function that routes specialist tasks to the OmegaClaw backend. Use it for:\n"
+            "- To identify a person: if a badge is visible, extract name, organization, and title, "
+            "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
+            "- To describe the scene: call agent(intent='describe_scene', "
+            "image_context='brief text description of what you see').\n"
+            "Do not use agent(intent='google_search') for general web questions when built-in search "
+            "can answer; reserve it only if the user explicitly needs the backend search path.\n\n"
+        )
+    else:
+        grounding = (
+            "You have an 'agent' function that routes specialist tasks to backend skills. Use it:\n"
+            "- To identify a person: if a badge is visible, extract name, organization, and title, "
+            "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
+            "- To describe the scene: call agent(intent='describe_scene', "
+            "image_context='brief text description of what you see').\n"
+            "- To search the web: call agent(intent='google_search', query=...).\n\n"
+        )
+    ack = (
+        "Before calling agent, always speak a brief acknowledgment first so the user knows you "
+        "heard them and work is in progress — for example: "
+        "\"Got it, looking that up,\" before a search or agent handoff; "
+        "\"One sec, checking who that is,\" for identify_person; "
+        "\"Let me describe what I'm seeing,\" for describe_scene. "
+        "Never call agent silently; the backend may take several seconds.\n\n"
+        "For general conversation or questions you can answer directly without tools, do not call agent. "
+        "Keep spoken responses short and natural — the user cannot see a screen."
+    )
+    return base + grounding + ack
 
 
 class EchoLiveAdapter:
@@ -196,10 +216,11 @@ class GeminiLiveAdapter:
         sender: SessionSender,
     ) -> None:
         log.info(
-            "gemini live adapter connect session_id=%s client=%s model=%s",
+            "gemini live adapter connect session_id=%s client=%s model=%s google_search_grounding=%s",
             session.session_id,
             hello.get("client", "unknown"),
             self.model_name,
+            self._google_search_grounding_active(),
         )
         self._closing = False
         self._sender = sender
@@ -280,16 +301,32 @@ class GeminiLiveAdapter:
         self._live_session_manager = None
         self._sender = None
 
+    def _google_search_grounding_active(self) -> bool:
+        return bool(self._settings.gemini_live_google_search_enabled and genai_types is not None)
+
+    def _live_tools(self) -> list[Any]:
+        tools: list[Any] = []
+        if self._google_search_grounding_active():
+            tools.append(genai_types.Tool(google_search=genai_types.GoogleSearch()))
+        tools.append(self._make_agent_tool())
+        return tools
+
     def _build_connect_config(self, hello: dict[str, Any]) -> Any:
         response_modalities = tuple(
             modality.upper() for modality in self._settings.gemini_response_modalities
         )
         wants_audio_output = "AUDIO" in response_modalities
+        if self._settings.gemini_live_google_search_enabled and genai_types is None:
+            log.warning(
+                "gemini live google search enabled in settings but google.genai.types is unavailable"
+            )
         return self._live_connect_config(
             response_modalities=list(response_modalities),
             session_resumption=self._session_resumption_config(handle=hello.get("session_resume")),
-            system_instruction=_SYSTEM_INSTRUCTION,
-            tools=[self._make_agent_tool()],
+            system_instruction=_system_instruction(
+                google_search_grounding=self._google_search_grounding_active(),
+            ),
+            tools=self._live_tools(),
             input_audio_transcription=(
                 self._audio_transcription_config() if wants_audio_output else None
             ),
