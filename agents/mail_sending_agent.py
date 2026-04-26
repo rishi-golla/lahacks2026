@@ -155,32 +155,47 @@ def _extract_email_address(text: str) -> str:
     return match.group(0) if match else ""
 
 
+def _fallback_extract_email_request(text: str) -> dict[str, str]:
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    recipient = _extract_email_address(normalized)
+    body_intent = normalized
+    if recipient:
+        body_intent = re.sub(re.escape(recipient), "", body_intent, flags=re.IGNORECASE).strip(" ,.")
+    body_intent = re.sub(r"^(send|draft|email|mail)\s+(an?\s+)?email\s+(to\s+)?", "", body_intent, flags=re.IGNORECASE)
+    body_intent = re.sub(r"^(send|draft|email|mail)\s+", "", body_intent, flags=re.IGNORECASE)
+    return {
+        "recipient": recipient,
+        "subject_hint": "",
+        "body_intent": body_intent.strip() or normalized,
+    }
+
+
 def extract_email_request(text: str, *, client: Any | None = None) -> dict[str, str]:
     llm_client = client or _get_asi_client()
-    response = llm_client.chat.completions.create(
-        model="asi1",
-        temperature=0,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an assistant that extracts only a JSON object from the user request. "
-                    "Output must be valid JSON with keys recipient, subject_hint, and body_intent. "
-                    "Use empty string for any missing value. Do not include markdown fences, explanation, or any text outside the JSON object. "
-                    "Example output: {\"recipient\": \"lucaskamadakim@gmail.com\", \"subject_hint\": \"hi\", \"body_intent\": \"saying hi\"}."
-                ),
-            },
-            {"role": "user", "content": text},
-        ],
-        max_tokens=400,
-    )
-    content = str(response.choices[0].message.content or "")
-    normalized = _strip_json_text(content)
     try:
+        response = llm_client.chat.completions.create(
+            model="asi1",
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an assistant that extracts only a JSON object from the user request. "
+                        "Output must be valid JSON with keys recipient, subject_hint, and body_intent. "
+                        "Use empty string for any missing value. Do not include markdown fences, explanation, or any text outside the JSON object. "
+                        "Example output: {\"recipient\": \"lucaskamadakim@gmail.com\", \"subject_hint\": \"hi\", \"body_intent\": \"saying hi\"}."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            max_tokens=400,
+            timeout=12,
+        )
+        content = str(response.choices[0].message.content or "")
+        normalized = _strip_json_text(content)
         parsed = json.loads(normalized)
-    except json.JSONDecodeError as e:
-        print(f"Failed to parse JSON from LLM response: {e}, content: {repr(content)}, normalized: {repr(normalized)}")
-        parsed = {}
+    except Exception:  # noqa: BLE001
+        parsed = _fallback_extract_email_request(text)
 
     recipient = str(parsed.get("recipient") or "").strip()
     if not recipient:

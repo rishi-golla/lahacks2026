@@ -111,6 +111,38 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
 
         asyncio.run(_run())
 
+    def test_run_once_uses_local_shim_for_mail_sending_agent(self) -> None:
+        loop = OmegaClawAgentLoop()
+        inbound = {
+            "request_id": "req-mail-local",
+            "tool_call_id": "tc-mail-local",
+            "intent": "Email Sarah and thank her",
+            "args": {},
+        }
+
+        async def _run() -> None:
+            mocked_shim = AsyncMock(return_value={"summary": "Done", "confidence": "high"})
+            mocked_remote = AsyncMock(return_value={"summary": "should-not-run"})
+            with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
+                "omegaclaw.runtime_loop.invoke_local_skill_shim", mocked_shim
+            ), patch("omegaclaw.runtime_loop.invoke_remote_skill", mocked_remote), patch(
+                "omegaclaw.runtime_loop.my_backend.send_message"
+            ):
+                did_work = await loop.run_once()
+                self.assertTrue(did_work)
+                mocked_shim.assert_awaited_once_with(
+                    skill_name="mail_sending_agent",
+                    args={
+                        "command": "Email Sarah and thank her",
+                        "recipient": "",
+                        "subject": "",
+                        "body": "",
+                    },
+                )
+                mocked_remote.assert_not_awaited()
+
+        asyncio.run(_run())
+
     def test_run_once_uses_local_shim_for_flagship_identify_person(self) -> None:
         loop = OmegaClawAgentLoop()
         inbound = {

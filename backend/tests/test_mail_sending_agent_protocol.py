@@ -4,7 +4,7 @@ import asyncio
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from uuid import uuid4
 from unittest.mock import patch
 
 
@@ -44,7 +44,7 @@ class MailSendingAgentProtocolTests(unittest.TestCase):
         ctx = _FakeContext()
         msg = ChatMessage(
             timestamp=None,
-            msg_id="msg-1",
+            msg_id=uuid4(),
             content=[TextContent(type="text", text="Send Sarah an email saying hi")],
         )
 
@@ -76,7 +76,7 @@ class MailSendingAgentProtocolTests(unittest.TestCase):
         ctx = _FakeContext()
         msg = ChatMessage(
             timestamp=None,
-            msg_id="msg-2",
+            msg_id=uuid4(),
             content=[TextContent(type="text", text="Send an email saying hi")],
         )
 

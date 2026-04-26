@@ -58,7 +58,7 @@ class OmegaClawAgentLoop:
                 error="no_matching_skill",
             )
         else:
-            if skill_name in {"identify_person", "reminder_agent"}:
+            if skill_name in {"identify_person", "reminder_agent", "mail_sending_agent"}:
                 result = await invoke_local_skill_shim(skill_name=skill_name, args=args)
             else:
                 result = await invoke_remote_skill(skill_name=skill_name, args=args)
@@ -84,6 +84,15 @@ class OmegaClawAgentLoop:
                 "command": intent,
                 "datetime": "",
                 "details": "",
+            }
+        if skill_name == "mail_sending_agent" and not any(
+            args.get(field) for field in ("command", "recipient", "subject", "body")
+        ):
+            return {
+                "command": intent,
+                "recipient": "",
+                "subject": "",
+                "body": "",
             }
         return args
 

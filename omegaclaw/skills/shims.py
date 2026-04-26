@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
+from agents.mail_sending_agent import build_html_email, extract_email_request, send_gmail_message
 from agents.reminder_core import extract_reminder_request, parse_datetime
 from omegaclaw.remote.agentverse_bridge import invoke_remote_skill
 
@@ -34,6 +35,8 @@ async def invoke_local_skill_shim(
         return {"summary": "I don't have a skill for that yet.", "confidence": "low", "source": "no-match"}
     if skill_name == "reminder_agent":
         return await _invoke_local_reminder(args)
+    if skill_name == "mail_sending_agent":
+        return await _invoke_local_mail_sending(args)
     return await invoke_remote_skill(skill_name=skill_name, args=args)
 
 
@@ -77,6 +80,41 @@ async def _invoke_local_reminder(args: dict[str, Any]) -> dict[str, Any]:
         "source": "local:reminder_agent",
         "datetime": datetime_text,
         "details": details,
+    }
+
+
+async def _invoke_local_mail_sending(args: dict[str, Any]) -> dict[str, Any]:
+    command = str(args.get("command") or "").strip()
+    recipient = str(args.get("recipient") or "").strip()
+    subject = str(args.get("subject") or "").strip()
+    body = str(args.get("body") or "").strip()
+
+    if recipient and (subject or body):
+        payload = {
+            "recipient": recipient,
+            "subject_hint": subject,
+            "body_intent": body,
+        }
+    else:
+        payload = extract_email_request(command)
+        recipient = str(payload.get("recipient") or "").strip()
+
+    if not recipient:
+        return {
+            "summary": "Who should I send that to?",
+            "confidence": "low",
+            "source": "local:mail_sending_agent",
+        }
+
+    email_subject, html_body = build_html_email(payload)
+    message_id = send_gmail_message(recipient=recipient, subject=email_subject, html_body=html_body)
+    return {
+        "summary": f"Done - I sent the email to {recipient}.",
+        "confidence": "high",
+        "source": "local:mail_sending_agent",
+        "recipient": recipient,
+        "subject": email_subject,
+        "message_id": message_id,
     }
 
 

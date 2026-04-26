@@ -44,6 +44,26 @@ class MailSendingAgentExtractionTests(unittest.TestCase):
         self.assertEqual(result["subject_hint"], "thank you")
         self.assertEqual(result["body_intent"], "thank Sarah for meeting today")
 
+    def test_extract_email_request_falls_back_when_model_call_fails(self) -> None:
+        class _FailingCompletions:
+            @staticmethod
+            def create(**_kwargs):
+                raise TimeoutError("asi1 timed out")
+
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=_FailingCompletions(),
+            )
+        )
+
+        result = extract_email_request(
+            "Send an email to sarah@example.com thanking her for meeting today.",
+            client=fake_client,
+        )
+
+        self.assertEqual(result["recipient"], "sarah@example.com")
+        self.assertIn("thanking her for meeting today", result["body_intent"])
+
 
 if __name__ == "__main__":
     unittest.main()
