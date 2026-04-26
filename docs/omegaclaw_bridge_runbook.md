@@ -39,9 +39,12 @@ This connects **real** OmegaClaw-Core (Docker) to the **FastAPI** backend used b
 
 ## Manual smoke test (you can run)
 
-1. `cd backend && OMEGACLAW_BRIDGE_ENABLED=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000`
-2. In another terminal: `curl -N "http://127.0.0.1:8000/internal/omegaclaw/next"` (should hang).
-3. Trigger any code path that calls `BackendChannel.submit` with bridge enabled, or run `uv run python -m pytest backend/tests/test_omegaclaw_bridge_http.py -q` if present.
-4. Build and run real OmegaClaw only after the backend round-trip test passes: `cd PeTTa/repos/OmegaClaw-Core && docker build -t my-omegaclaw:dev . && ./scripts/omegaclaw my-omegaclaw:dev`.
+1. `cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000` — `backend/.env` is loaded at startup, so set `OMEGACLAW_BRIDGE_ENABLED=1` there (or export it).
+2. In another terminal: `curl -N "http://127.0.0.1:8000/internal/omegaclaw/next"` (should hang until a job exists).
+3. **Phase 4 (real OmegaClaw):** set `OMEGACLAW_BRIDGE_SMOKE=1` in `backend/.env`, restart the server, start `./scripts/omegaclaw <image>` with option **3**, then run  
+   `curl -N -X POST "http://127.0.0.1:8000/internal/omegaclaw/smoke-submit"`  
+   (blocks until the container’s LLM finishes and POSTs `/internal/omegaclaw/result`; turn smoke off afterward). If `OMEGACLAW_BRIDGE_SECRET` is set, add header `Authorization: Bearer <secret>`.
+4. Or run `uv run python -m pytest tests/test_omegaclaw_bridge_http.py -q` from `backend/` for in-process bridge tests (no Docker).
+5. Build and run real OmegaClaw: `cd PeTTa/repos/OmegaClaw-Core && docker build -t my-omegaclaw:dev . && ./scripts/omegaclaw my-omegaclaw:dev`.
 
 See [OMEGACLAW_DOCKER_WORKFLOW.md](OMEGACLAW_DOCKER_WORKFLOW.md) for clone / build / run order.

@@ -1,4 +1,11 @@
 import logging
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load all of `backend/.env` into the process environment so bridge flags and
+# secrets apply to modules that read `os.environ` (not only Pydantic settings).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 
 from fastapi import FastAPI
 

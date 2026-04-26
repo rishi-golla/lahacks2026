@@ -45,6 +45,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "httpx" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "structlog" },
 ]
 
@@ -59,6 +60,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.73.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "structlog", specifier = ">=25.5.0" },
 ]
 

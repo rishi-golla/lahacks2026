@@ -21,8 +21,10 @@ class OmegaClawBridgeHttpTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._prev_bridge = os.environ.get("OMEGACLAW_BRIDGE_ENABLED")
         self._prev_secret = os.environ.get("OMEGACLAW_BRIDGE_SECRET")
+        self._prev_smoke = os.environ.get("OMEGACLAW_BRIDGE_SMOKE")
         os.environ["OMEGACLAW_BRIDGE_ENABLED"] = "1"
         os.environ.pop("OMEGACLAW_BRIDGE_SECRET", None)
+        os.environ.pop("OMEGACLAW_BRIDGE_SMOKE", None)
 
     async def asyncTearDown(self) -> None:
         if self._prev_bridge is None:
@@ -33,6 +35,10 @@ class OmegaClawBridgeHttpTests(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("OMEGACLAW_BRIDGE_SECRET", None)
         else:
             os.environ["OMEGACLAW_BRIDGE_SECRET"] = self._prev_secret
+        if self._prev_smoke is None:
+            os.environ.pop("OMEGACLAW_BRIDGE_SMOKE", None)
+        else:
+            os.environ["OMEGACLAW_BRIDGE_SMOKE"] = self._prev_smoke
 
         from app import omegaclaw_bridge as ob
 
@@ -147,3 +153,46 @@ class OmegaClawBridgeHttpTests(unittest.IsolatedAsyncioTestCase):
         first.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await first
+
+    async def test_smoke_submit_returns_404_when_disabled(self) -> None:
+        from app.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            r = await client.post("/internal/omegaclaw/smoke-submit")
+        self.assertEqual(r.status_code, 404)
+
+    async def test_smoke_submit_round_trips_through_http_bridge(self) -> None:
+        os.environ["OMEGACLAW_BRIDGE_SMOKE"] = "1"
+        from app.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", timeout=30.0) as client:
+            smoke_task = asyncio.create_task(client.post("/internal/omegaclaw/smoke-submit"))
+            await asyncio.sleep(0.08)
+            next_response = await client.get("/internal/omegaclaw/next")
+            self.assertEqual(next_response.status_code, 200)
+            self.assertTrue(next_response.text.startswith("LAHACKS_TASK_JSON:"))
+            job = json.loads(next_response.text.split(":", 1)[1])
+            result_text = json.dumps(
+                {
+                    "request_id": job["request_id"],
+                    "result": {
+                        "summary": "smoke via endpoint",
+                        "confidence": "high",
+                        "source": "test:smoke_submit",
+                    },
+                }
+            )
+            result_response = await client.post(
+                "/internal/omegaclaw/result",
+                json={"request_id": job["request_id"], "text": result_text},
+            )
+            self.assertEqual(result_response.status_code, 200)
+            smoke_response = await asyncio.wait_for(smoke_task, timeout=5.0)
+
+        self.assertEqual(smoke_response.status_code, 200)
+        body = smoke_response.json()
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body["result"]["summary"], "smoke via endpoint")
+        self.assertEqual(body["result"]["source"], "test:smoke_submit")
