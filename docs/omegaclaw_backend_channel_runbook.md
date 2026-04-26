@@ -1,6 +1,8 @@
 # OmegaClaw Backend Channel Runbook
 
-This runbook explains how the custom backend channel starts, what configuration it needs, and how it plugs into `src/channels.metta` and the Agentverse dispatch path.
+For **real OmegaClaw-Core in Docker** talking to this FastAPI process over HTTP, see [omegaclaw_bridge_runbook.md](omegaclaw_bridge_runbook.md) and [OMEGACLAW_DOCKER_WORKFLOW.md](OMEGACLAW_DOCKER_WORKFLOW.md).
+
+This runbook explains how the **in-process Python shim** channel starts, what configuration it needs, and how it plugs into the local `omegaclaw/` tree and the Agentverse dispatch path.
 
 ## Scope
 

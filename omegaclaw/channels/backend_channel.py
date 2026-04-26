@@ -46,10 +46,47 @@ class BackendChannel:
 
     async def submit(self, task: GlassesTask) -> dict[str, Any]:
         """Route a task to OmegaClaw and return normalized skill output."""
+        if self._bridge_mode():
+            return await self._submit_via_omegaclaw_bridge(task)
         omegaclaw_url = os.environ.get("OMEGACLAW_URL")
         if omegaclaw_url:
             return await self._call_omegaclaw(omegaclaw_url, task)
         return await self._dispatch_via_channel_loop(task)
+
+    @staticmethod
+    def _bridge_mode() -> bool:
+        try:
+            from app.omegaclaw_bridge import bridge_enabled  # type: ignore[import-not-found]
+        except ImportError:
+            try:
+                from backend.app.omegaclaw_bridge import bridge_enabled  # type: ignore[import-not-found]
+            except ImportError:
+                return False
+        return bridge_enabled()
+
+    async def _submit_via_omegaclaw_bridge(self, task: GlassesTask) -> dict[str, Any]:
+        try:
+            from app.omegaclaw_bridge import enqueue_and_wait  # type: ignore[import-not-found]
+        except ImportError:
+            from backend.app.omegaclaw_bridge import enqueue_and_wait  # type: ignore[import-not-found]
+
+        import uuid
+
+        job = task.to_channel_message()
+        job["request_id"] = str(job.get("request_id") or uuid.uuid4())
+        try:
+            response = await enqueue_and_wait(job, self._request_timeout_s)
+        except asyncio.TimeoutError:
+            return {
+                "summary": "The skill request timed out before a response was available.",
+                "confidence": "low",
+                "source": "omegaclaw:timeout",
+                "error": "channel_wait_timeout",
+            }
+        result = response.get("result")
+        if isinstance(result, dict):
+            return result
+        return {"summary": "Invalid channel response", "confidence": "low", "source": "omegaclaw:channel"}
 
     async def _dispatch_via_channel_loop(self, task: GlassesTask) -> dict[str, Any]:
         my_backend.start_my_backend(

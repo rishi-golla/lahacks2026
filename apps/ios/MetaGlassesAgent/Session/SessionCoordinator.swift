@@ -108,9 +108,14 @@ final class SessionCoordinator: ObservableObject {
         receiveTask = nil
         glassesStateTask?.cancel()
         glassesStateTask = nil
+        // Best-effort: do not block stop on a stuck WebSocket send; disconnect ends the server session.
+        Task { [backend] in
+            try? await backend.send(.audioEnd)
+        }
         backend.close()
         await audioPipeline.stop()
-        await glasses.stop()
+        // Meta `StreamSession.stop()` can hang; never block the UI on it indefinitely.
+        await endGlassesSessionWithTimeout(seconds: 10)
         status = .ended
         appendDebug("Session stopped")
     }
@@ -466,8 +471,6 @@ final class SessionCoordinator: ObservableObject {
         isMicStreaming = false
         isVisualContextStreaming = false
         visualContextSourceLabel = "Idle"
-
-        try? await backend.send(.audioEnd)
     }
 
     private func cleanupAfterFailedStart() async {
@@ -485,6 +488,29 @@ final class SessionCoordinator: ObservableObject {
         backend.close()
         await audioPipeline.stop()
         await glasses.stop()
+    }
+
+    /// Waits for `glasses.stop()` or `seconds` elapse, whichever is first, so **Stop** always completes.
+    private func endGlassesSessionWithTimeout(seconds: TimeInterval) async {
+        let result = await withTaskGroup(of: String.self) { group -> String in
+            group.addTask { @MainActor in
+                await self.glasses.stop()
+                return "ok"
+            }
+            group.addTask {
+                let nanos = UInt64(seconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanos)
+                return "timeout"
+            }
+            let first = await group.next()!
+            group.cancelAll()
+            return first
+        }
+        if result == "timeout" {
+            appendDebug(
+                "Glasses: stop() exceeded \(Int(seconds))s; UI reset. If Start Assistant fails, force-quit the app and retry."
+            )
+        }
     }
 
     private func appendDebug(_ line: String) {
