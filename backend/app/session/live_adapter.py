@@ -10,6 +10,8 @@ from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass
 import logging
 import re
+import sys
+from pathlib import Path
 from typing import Any
 
 try:
@@ -19,7 +21,30 @@ except ImportError:  # pragma: no cover - exercised in tests via the fallback pa
     genai = None
     genai_types = None
 
+# Add project root to path so omegaclaw is importable from the backend
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[3])
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+try:
+    from omegaclaw.channels.my_backend import enqueue_message as _omegaclaw_enqueue
+    from omegaclaw.channels.backend_channel import BackendChannel as _BackendChannel
+    from omegaclaw.channels.backend_channel import GlassesTask as _GlassesTask
+    from omegaclaw.runtime_loop import OmegaClawAgentLoop as _OmegaClawAgentLoop
+    _omegaclaw_available = True
+except ImportError:  # pragma: no cover
+    _omegaclaw_enqueue = None
+    _BackendChannel = None
+    _GlassesTask = None
+    _OmegaClawAgentLoop = None
+    _omegaclaw_available = False
+
 from .coordinator import LiveAdapter, SessionContext, SessionSender
+from ..google.actions import (
+    PROTECTED_GOOGLE_INTENTS,
+    begin_protected_action,
+    confirm_pending_action,
+)
 from .settings import LiveBackend, SessionSettings, get_session_settings
 
 log = logging.getLogger(__name__)
@@ -36,6 +61,8 @@ class _FallbackLiveConnectConfig:
     session_resumption: Any | None = None
     input_audio_transcription: Any | None = None
     output_audio_transcription: Any | None = None
+    system_instruction: str | None = None
+    tools: list[Any] | None = None
 
 
 @dataclass(slots=True)
@@ -52,6 +79,54 @@ class _FallbackSessionResumptionConfig:
 @dataclass(slots=True)
 class _FallbackAudioTranscriptionConfig:
     pass
+
+
+@dataclass(slots=True)
+class _FallbackFunctionDeclaration:
+    name: str
+    description: str
+    parameters: Any | None = None
+
+
+@dataclass(slots=True)
+class _FallbackSchema:
+    type: str
+    properties: dict | None = None
+    required: list | None = None
+    description: str | None = None
+
+
+@dataclass(slots=True)
+class _FallbackTool:
+    function_declarations: list | None = None
+
+
+@dataclass(slots=True)
+class _FallbackFunctionResponse:
+    id: str
+    name: str
+    response: dict
+
+
+_SYSTEM_INSTRUCTION = (
+    "You are a hands-free assistant for smart glasses. "
+    "Treat incoming realtime image/video frames as the user's current point-of-view camera feed. "
+    "Answer visual questions directly from the frame when one is present.\n\n"
+    "You have an 'agent' function that routes specialist tasks to backend skills. Use it:\n"
+    "- To identify a person: if a badge is visible, extract name, organization, and title, "
+    "then call agent(intent='identify_person', name=..., organization=..., title=...).\n"
+    "- To describe the scene: call agent(intent='describe_scene', "
+    "image_context='brief text description of what you see').\n"
+    "- To search the web: call agent(intent='google_search', query=...).\n\n"
+    "Before calling agent, always speak a brief acknowledgment first so the user knows you "
+    "heard them and work is in progress — for example: "
+    "\"Got it, looking that up,\" then agent for search; "
+    "\"One sec, checking who that is,\" for identify_person; "
+    "\"Let me describe what I'm seeing,\" for describe_scene. "
+    "Never call agent silently; the backend may take several seconds.\n\n"
+    "For general conversation or questions you can answer directly, do not call agent. "
+    "Keep spoken responses short and natural — the user cannot see a screen."
+)
 
 
 class EchoLiveAdapter:
@@ -114,6 +189,10 @@ class GeminiLiveAdapter:
         self._sender: SessionSender | None = None
         self._receive_task: asyncio.Task[None] | None = None
         self._closing = False
+        self._agent_loop = _OmegaClawAgentLoop() if _omegaclaw_available else None
+        self._backend_channel = _BackendChannel() if _BackendChannel is not None else None
+        if not _omegaclaw_available:
+            log.warning("gemini live adapter omegaclaw not available — agent tool calls will return fallback")
 
     async def open(
         self,
@@ -144,7 +223,8 @@ class GeminiLiveAdapter:
         sender: SessionSender,
     ) -> None:
         message_type = str(message.get("type", "?"))
-        log.info(
+        log_method = log.debug if message_type == "audio" else log.info
+        log_method(
             "gemini live adapter message session_id=%s type=%s",
             session.session_id,
             message_type,
@@ -161,6 +241,14 @@ class GeminiLiveAdapter:
             return
 
         if message_type == "text":
+            confirmation_result = confirm_pending_action(message["text"])
+            if confirmation_result is not None:
+                await sender.emit(
+                    "transcript_out",
+                    {"text": confirmation_result["summary"], "is_final": True},
+                )
+                await sender.complete_output_turn()
+                return
             await self._forward_text(message["text"])
             return
         if message_type == "audio":
@@ -170,7 +258,11 @@ class GeminiLiveAdapter:
             await self._live_session.send_realtime_input(audio_stream_end=True)
             return
         if message_type == "photo":
-            await self._forward_photo(message["jpeg_b64"])
+            await self._forward_photo(
+                message["jpeg_b64"],
+                trigger=message.get("trigger"),
+                tool_call_id=message.get("tool_call_id"),
+            )
             return
         if message_type == "barge_in":
             log.info("gemini live adapter barge-in session_id=%s", session.session_id)
@@ -202,21 +294,25 @@ class GeminiLiveAdapter:
         self._sender = None
 
     def _build_connect_config(self, hello: dict[str, Any]) -> Any:
+        response_modalities = tuple(
+            modality.upper() for modality in self._settings.gemini_response_modalities
+        )
+        wants_audio_output = "AUDIO" in response_modalities
         return self._live_connect_config(
-            response_modalities=list(self._settings.gemini_response_modalities),
+            response_modalities=list(response_modalities),
             session_resumption=self._session_resumption_config(handle=hello.get("session_resume")),
-            input_audio_transcription=self._audio_transcription_config(),
-            output_audio_transcription=self._audio_transcription_config(),
+            system_instruction=_SYSTEM_INSTRUCTION,
+            tools=[self._make_agent_tool()],
+            input_audio_transcription=(
+                self._audio_transcription_config() if wants_audio_output else None
+            ),
+            output_audio_transcription=(
+                self._audio_transcription_config() if wants_audio_output else None
+            ),
         )
 
     async def _forward_text(self, text: str) -> None:
-        await self._live_session.send_client_content(
-            turns={
-                "role": "user",
-                "parts": [{"text": text}],
-            },
-            turn_complete=True,
-        )
+        await self._live_session.send_realtime_input(text=text)
 
     async def _forward_audio(self, pcm_b64: str, *, sample_rate: int) -> None:
         audio_bytes = self._decode_base64(pcm_b64, field_name="pcm_b64")
@@ -224,10 +320,22 @@ class GeminiLiveAdapter:
             audio=self._blob(data=audio_bytes, mime_type=f"audio/pcm;rate={sample_rate}")
         )
 
-    async def _forward_photo(self, jpeg_b64: str) -> None:
+    async def _forward_photo(
+        self,
+        jpeg_b64: str,
+        *,
+        trigger: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> None:
         jpeg_bytes = self._decode_base64(jpeg_b64, field_name="jpeg_b64")
+        log.info(
+            "gemini live adapter forwarding photo bytes=%s trigger=%s tool_call_id=%s",
+            len(jpeg_bytes),
+            trigger,
+            tool_call_id,
+        )
         await self._live_session.send_realtime_input(
-            media=self._blob(data=jpeg_bytes, mime_type="image/jpeg")
+            video=self._blob(data=jpeg_bytes, mime_type="image/jpeg")
         )
 
     async def _pump_server_events(self, session: SessionContext) -> None:
@@ -237,21 +345,34 @@ class GeminiLiveAdapter:
             return
 
         try:
-            async for response in live_session.receive():
-                await self._handle_server_message(response, sender)
+            while not self._closing:
+                saw_response = False
+                async for response in live_session.receive():
+                    saw_response = True
+                    await self._handle_server_message(response, sender, session)
+
+                if self._closing:
+                    break
+                if not saw_response:
+                    log.info(
+                        "gemini live adapter receive ended without messages session_id=%s",
+                        session.session_id,
+                    )
+                    break
+                log.info(
+                    "gemini live adapter turn receive complete session_id=%s",
+                    session.session_id,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("gemini live adapter receive failed session_id=%s: %s", session.session_id, exc)
             if not self._closing:
                 await sender.emit("session_end", {"reason": "gemini_receive_error"})
-        else:
-            if not self._closing:
-                await sender.emit("session_end", {"reason": "gemini_live_closed"})
         finally:
             self._receive_task = None
 
-    async def _handle_server_message(self, response: Any, sender: SessionSender) -> None:
+    async def _handle_server_message(self, response: Any, sender: SessionSender, session: SessionContext | None = None) -> None:
         resumption_update = getattr(response, "session_resumption_update", None)
         if (
             resumption_update is not None
@@ -263,9 +384,21 @@ class GeminiLiveAdapter:
                 {"session_resume_token": str(resumption_update.new_handle)},
             )
 
+        # Handle model tool calls before server_content
+        tool_call = getattr(response, "tool_call", None)
+        if tool_call is not None:
+            function_calls = getattr(tool_call, "function_calls", None) or []
+            for fc in function_calls:
+                await self._handle_function_call(fc, sender, session)
+
         server_content = getattr(response, "server_content", None)
         if server_content is None:
             return
+        log.debug(
+            "gemini live adapter server_content turn_complete=%s interrupted=%s",
+            bool(getattr(server_content, "turn_complete", False)),
+            bool(getattr(server_content, "interrupted", False)),
+        )
 
         input_transcription = getattr(server_content, "input_transcription", None)
         if input_transcription is not None and getattr(input_transcription, "text", None):
@@ -304,6 +437,8 @@ class GeminiLiveAdapter:
 
         model_turn = getattr(server_content, "model_turn", None)
         parts = getattr(model_turn, "parts", None) or []
+        if parts:
+            log.debug("gemini live adapter model_turn parts=%s", len(parts))
         for part in parts:
             inline_data = getattr(part, "inline_data", None)
             if inline_data is None or getattr(inline_data, "data", None) is None:
@@ -312,6 +447,11 @@ class GeminiLiveAdapter:
             if not mime_type.startswith("audio/pcm"):
                 continue
 
+            log.debug(
+                "gemini live adapter audio chunk bytes=%s mime_type=%s",
+                len(inline_data.data),
+                mime_type,
+            )
             await sender.emit(
                 "audio_chunk",
                 {
@@ -325,6 +465,121 @@ class GeminiLiveAdapter:
 
         if getattr(server_content, "turn_complete", False):
             await sender.complete_output_turn()
+
+    async def _handle_function_call(
+        self,
+        fc: Any,
+        sender: SessionSender,
+        session: SessionContext | None = None,
+    ) -> None:
+        name = str(getattr(fc, "name", "") or "")
+        args = dict(getattr(fc, "args", {}) or {})
+        fc_id = str(getattr(fc, "id", "") or "")
+
+        log.info("gemini live adapter function_call name=%s id=%s args=%s", name, fc_id, args)
+
+        if name == "agent":
+            await self._handle_agent_tool_call(fc_id, args, sender, session)
+        else:
+            log.warning("gemini live adapter unhandled function call name=%s", name)
+            if self._live_session is not None:
+                await self._live_session.send_tool_response(
+                    function_responses=[
+                        self._function_response(
+                            id=fc_id,
+                            name=name,
+                            output=f"Unknown function: {name}",
+                        )
+                    ]
+                )
+
+    async def _handle_agent_tool_call(
+        self,
+        call_id: str,
+        args: dict[str, Any],
+        sender: SessionSender,
+        session: SessionContext | None = None,
+    ) -> None:
+        intent = str(args.pop("intent", ""))
+        log.info("gemini live adapter agent tool intent=%s args=%s", intent, args)
+
+        # Notify iOS debug UI that a tool call started
+        await sender.send({
+            "type": "tool_event",
+            "tool_call_id": call_id,
+            "name": "agent",
+            "phase": "started",
+            "args": {k: v for k, v in {"intent": intent, **args}.items()},
+        })
+
+        summary: str
+        if not _omegaclaw_available or self._agent_loop is None:
+            summary = "Agent skills are not available right now."
+            log.warning("gemini live adapter agent tool called but omegaclaw not available")
+        elif intent in PROTECTED_GOOGLE_INTENTS:
+            result = begin_protected_action(intent, {k: str(v) for k, v in args.items()})
+            summary = result["summary"]
+        elif self._backend_channel is not None and _GlassesTask is not None and session is not None:
+            try:
+                result = await self._backend_channel.submit(
+                    _GlassesTask(
+                        session_id=session.session_id,
+                        turn_id=call_id,
+                        intent=intent,
+                        tool_call_id=call_id,
+                        args=args,
+                    )
+                )
+                summary = (
+                    result.get("summary")
+                    or result.get("description")
+                    or str(result)
+                )
+            except Exception as exc:  # noqa: BLE001
+                summary = "I had trouble completing that request."
+                log.exception("gemini live adapter backend channel failed intent=%s: %s", intent, exc)
+        else:
+            try:
+                request_id, fut = _omegaclaw_enqueue({
+                    "intent": intent,
+                    "args": args,
+                })
+                await self._agent_loop.run_once()
+                response_payload = await asyncio.wait_for(fut, timeout=10.0)
+                result = response_payload.get("result", {})
+                if isinstance(result, dict):
+                    summary = (
+                        result.get("summary")
+                        or result.get("description")
+                        or str(result)
+                    )
+                else:
+                    summary = str(result)
+            except asyncio.TimeoutError:
+                summary = "The request timed out. Please try again."
+                log.warning("gemini live adapter agent tool timed out intent=%s", intent)
+            except Exception as exc:  # noqa: BLE001
+                summary = "I had trouble completing that request."
+                log.exception("gemini live adapter agent tool failed intent=%s: %s", intent, exc)
+
+        log.info("gemini live adapter agent tool result intent=%s summary=%r", intent, summary[:120])
+
+        # Notify iOS debug UI of result
+        await sender.send({
+            "type": "tool_event",
+            "tool_call_id": call_id,
+            "name": "agent",
+            "phase": "result",
+            "result_summary": summary,
+        })
+
+        # Send function response back to Gemini so it can speak the result
+        if self._live_session is not None:
+            await self._live_session.send_tool_response(
+                function_responses=[
+                    self._function_response(id=call_id, name="agent", output=summary)
+                ]
+            )
 
     @staticmethod
     def _decode_base64(value: str, *, field_name: str) -> bytes:
@@ -346,25 +601,94 @@ class GeminiLiveAdapter:
         return _FallbackHttpOptions(api_version=api_version)
 
     @staticmethod
+    def _make_agent_tool() -> Any:
+        """Build the 'agent' function declaration for Gemini Live."""
+        if genai_types is not None:
+            str_schema = genai_types.Schema(type=genai_types.Type.STRING)
+            return genai_types.Tool(
+                function_declarations=[
+                    genai_types.FunctionDeclaration(
+                        name="agent",
+                        description=(
+                            "Route a specialist task to the OmegaClaw backend. "
+                            "Use for person identification, scene description, or web search."
+                        ),
+                        parameters=genai_types.Schema(
+                            type=genai_types.Type.OBJECT,
+                            properties={
+                                "intent": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="What the user wants, e.g. 'identify_person', 'describe_scene', 'google_search'",
+                                ),
+                                "name": str_schema,
+                                "organization": str_schema,
+                                "title": str_schema,
+                                "image_context": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="Brief text description of the scene for describe_scene",
+                                ),
+                                "query": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="Search query for google_search",
+                                ),
+                                "recipient": str_schema,
+                                "subject": str_schema,
+                                "body": str_schema,
+                                "command": str_schema,
+                                "datetime": str_schema,
+                                "details": str_schema,
+                                "title_text": genai_types.Schema(
+                                    type=genai_types.Type.STRING,
+                                    description="Task title for google_tasks",
+                                ),
+                            },
+                            required=["intent"],
+                        ),
+                    )
+                ]
+            )
+        # Fallback (no-op when genai_types unavailable)
+        return _FallbackTool(
+            function_declarations=[
+                _FallbackFunctionDeclaration(
+                    name="agent",
+                    description="Route a specialist task to OmegaClaw.",
+                )
+            ]
+        )
+
+    @staticmethod
+    def _function_response(*, id: str, name: str, output: str) -> Any:
+        if genai_types is not None:
+            return genai_types.FunctionResponse(id=id, name=name, response={"output": output})
+        return _FallbackFunctionResponse(id=id, name=name, response={"output": output})
+
+    @staticmethod
     def _live_connect_config(
         *,
         response_modalities: list[str],
         session_resumption: Any | None = None,
         input_audio_transcription: Any | None = None,
         output_audio_transcription: Any | None = None,
+        system_instruction: str | None = None,
+        tools: list[Any] | None = None,
     ) -> Any:
         if genai_types is not None:
             return genai_types.LiveConnectConfig(
                 response_modalities=response_modalities,
                 session_resumption=session_resumption,
+                system_instruction=system_instruction,
                 input_audio_transcription=input_audio_transcription,
                 output_audio_transcription=output_audio_transcription,
+                tools=tools,
             )
         return _FallbackLiveConnectConfig(
             response_modalities=response_modalities,
             session_resumption=session_resumption,
             input_audio_transcription=input_audio_transcription,
             output_audio_transcription=output_audio_transcription,
+            system_instruction=system_instruction,
+            tools=tools,
         )
 
     @staticmethod

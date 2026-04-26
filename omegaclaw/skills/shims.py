@@ -1,51 +1,46 @@
-# Local skill shims for development without a live OmegaClaw gateway.
-# Each shim calls the Agentverse FastAPI service directly.
+"""Local shim entrypoints for OmegaClaw skill dispatch."""
 
-import os
-import httpx
-from omegaclaw.channels.backend_channel import GlassesTask
+from __future__ import annotations
 
-AGENTVERSE_URL = os.environ.get("AGENTVERSE_URL", "http://localhost:8001")
+from typing import Any
 
-async def dispatch_skill(task: GlassesTask) -> dict:
-    skill = _classify(task.intent, task.args)
-    if skill == "identify_person":
-        return await _identify_person(task.args)
-    elif skill == "describe_scene":
-        return await _describe_scene(task.args)
-    else:
-        return {"summary": f"I don't have a skill for that yet.", "confidence": "low", "source": "no-match"}
+from omegaclaw.remote.agentverse_bridge import invoke_remote_skill
 
-def _classify(intent: str, args: dict) -> str:
+
+def classify_intent(intent: str, args: dict[str, Any]) -> str:
     intent_lower = intent.lower()
-    if any(p in intent_lower for p in ["who is", "identify", "who am i looking at", "tell me about this person"]):
+    if any(
+        phrase in intent_lower
+        for phrase in ("who is", "identify", "who am i looking at", "tell me about this person")
+    ):
         return "identify_person"
-    if any(p in intent_lower for p in ["what am i", "describe", "what is this", "what do i see"]):
+    if any(phrase in intent_lower for phrase in ("what am i", "describe", "what is this", "what do i see")):
         return "describe_scene"
     if args.get("name"):
         return "identify_person"
     return "unknown"
 
-async def _identify_person(args: dict) -> dict:
-    payload = {
-        "messages": [{"role": "user", "content": f"Identify person: {args.get('name', 'Unknown')}, {args.get('organization', 'Unknown')}, {args.get('title', '')}"}]
-    }
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(f"{AGENTVERSE_URL}/v1/chat/completions", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            return {"summary": data["choices"][0]["message"]["content"], "confidence": "high", "source": "agentverse"}
-    except Exception as e:
-        return {"summary": f"Could not reach the skill service: {e}", "confidence": "low", "source": "error"}
 
-async def _describe_scene(args: dict) -> dict:
-    image_context = args.get("image_context", "")
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(f"{AGENTVERSE_URL}/v1/describe", json={"image_context": image_context})
-            resp.raise_for_status()
-            data = resp.json()
-            return {"summary": data.get("description", ""), "confidence": data.get("confidence", "low"), "source": "agentverse"}
-    except Exception as e:
-        return {"summary": f"Could not reach the scene description service: {e}", "confidence": "low", "source": "error"}
+async def invoke_local_skill_shim(
+    *,
+    skill_name: str,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Local shim path that delegates to the canonical Agentverse bridge."""
+    if skill_name == "unknown":
+        return {"summary": "I don't have a skill for that yet.", "confidence": "low", "source": "no-match"}
+    return await invoke_remote_skill(skill_name=skill_name, args=args)
+
+
+async def dispatch_skill(task: Any) -> dict[str, Any]:
+    """Compatibility shim for older call sites passing a task-like object."""
+    if isinstance(task, dict):
+        intent = str(task.get("intent", ""))
+        args = task.get("args", {})
+    else:
+        intent = str(getattr(task, "intent", ""))
+        args = getattr(task, "args", {})
+    if not isinstance(args, dict):
+        args = {}
+    skill_name = classify_intent(intent, args)
+    return await invoke_local_skill_shim(skill_name=skill_name, args=args)

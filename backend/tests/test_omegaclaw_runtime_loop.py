@@ -22,8 +22,11 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
         self.assertEqual(classify("Who is this person?", {}), "identify_person")
         self.assertEqual(classify("Describe what I see", {}), "describe_scene")
         self.assertEqual(classify("Google search for LAHacks updates", {}), "google_search")
-        self.assertEqual(classify("Schedule a meeting tomorrow", {}), "google_calendar")
-        self.assertEqual(classify("Draft email to team", {}), "gmail")
+        self.assertEqual(classify("Schedule a meeting tomorrow", {}), "task_scheduling_agent")
+        self.assertEqual(classify("Draft email to team", {}), "mail_sending_agent")
+        self.assertEqual(classify("Find this person from Stripe", {}), "people_search_agent")
+        self.assertEqual(classify("Remind me tomorrow to stretch", {}), "reminder_agent")
+        self.assertEqual(classify("Buy new headphones", {}), "purchase_agent")
         self.assertEqual(classify("Do something unknown", {}), "unknown")
 
     def test_run_once_dispatches_known_skill_and_sends_response(self) -> None:
@@ -57,6 +60,30 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
 
         self.assertTrue(asyncio.run(_run()))
 
+    def test_run_once_uses_local_shim_for_flagship_identify_person(self) -> None:
+        loop = OmegaClawAgentLoop()
+        inbound = {
+            "request_id": "req-shim",
+            "tool_call_id": "tc-shim",
+            "intent": "Who is this?",
+            "args": {"name": "Sam"},
+        }
+
+        async def _run() -> None:
+            mocked_shim = AsyncMock(return_value={"summary": "Sam is...", "confidence": "high"})
+            mocked_remote = AsyncMock(return_value={"summary": "should-not-run"})
+            with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
+                "omegaclaw.runtime_loop.invoke_local_skill_shim", mocked_shim
+            ), patch("omegaclaw.runtime_loop.invoke_remote_skill", mocked_remote), patch(
+                "omegaclaw.runtime_loop.my_backend.send_message"
+            ):
+                did_work = await loop.run_once()
+                self.assertTrue(did_work)
+                mocked_shim.assert_awaited_once_with(skill_name="identify_person", args={"name": "Sam"})
+                mocked_remote.assert_not_awaited()
+
+        asyncio.run(_run())
+
     def test_run_once_handles_unknown_skill_without_remote_call(self) -> None:
         loop = OmegaClawAgentLoop()
         inbound = {
@@ -79,6 +106,31 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
                 self.assertEqual(payload["result"]["source"], "omegaclaw:no_match")
                 self.assertEqual(payload["events"][1]["phase"], "error")
                 self.assertEqual(payload["events"][1]["error"], "no_matching_skill")
+
+        asyncio.run(_run())
+
+    def test_run_once_handles_explicit_unsupported_skill_name_as_no_match(self) -> None:
+        loop = OmegaClawAgentLoop()
+        inbound = {
+            "request_id": "req-3",
+            "tool_call_id": "tc-3",
+            "intent": "whatever",
+            "skill_name": "unsupported_skill",
+            "args": {},
+        }
+
+        async def _run() -> None:
+            mocked_remote = AsyncMock(return_value={"summary": "should-not-run"})
+            with patch("omegaclaw.runtime_loop.my_backend.getLastMessage", return_value=inbound), patch(
+                "omegaclaw.runtime_loop.invoke_remote_skill", mocked_remote
+            ), patch("omegaclaw.runtime_loop.my_backend.send_message") as mocked_send:
+                did_work = await loop.run_once()
+                self.assertTrue(did_work)
+                mocked_remote.assert_not_awaited()
+                payload = json.loads(mocked_send.call_args.args[0])
+                self.assertEqual(payload["skill_name"], "unsupported_skill")
+                self.assertEqual(payload["result"]["source"], "omegaclaw:no_match")
+                self.assertEqual(payload["events"][1]["phase"], "error")
 
         asyncio.run(_run())
 

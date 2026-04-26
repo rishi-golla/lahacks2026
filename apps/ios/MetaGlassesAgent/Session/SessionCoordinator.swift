@@ -3,6 +3,11 @@ import UIKit
 
 @MainActor
 final class SessionCoordinator: ObservableObject {
+    private enum VisualContextEvent {
+        case frame(UIImage)
+        case firstFrameTimeout
+    }
+
     enum Status: Equatable {
         case idle
         case connecting
@@ -37,21 +42,37 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var debugLog: [String] = []
     @Published private(set) var latestDebugLine = "No debug events yet"
     @Published private(set) var isLoopbackRunning = false
+    @Published private(set) var isMicStreaming = false
+    @Published private(set) var isVisualContextStreaming = false
+    @Published private(set) var visualContextSourceLabel = "Idle"
+    @Published private(set) var visualContextFrameCount = 0
 
     private let glasses: GlassesSession
+    private let glassesSourceLabel: String
     private let audioPipeline: AudioPipeline
     private let backend: BackendClient
     private let photoCapture = PhotoCapture()
     private var receiveTask: Task<Void, Never>?
+    private var glassesStateTask: Task<Void, Never>?
+    private var micStreamingTask: Task<Void, Never>?
+    private var visualContextTask: Task<Void, Never>?
     private var sessionResumeToken: String?
+    private var sentAudioChunkCount = 0
+    private var sentVisualFrameCount = 0
+    private var lastVisualPreviewUpdateSeconds: TimeInterval = 0
+    private let visualStreamFirstFrameTimeoutNanoseconds: UInt64 = 3_000_000_000
+    private let visualFallbackIntervalNanoseconds: UInt64 = 4_000_000_000
+    private let visualPreviewUpdateIntervalSeconds: TimeInterval = 4
 
     init(
         glasses: GlassesSession,
-        audioPipeline: AudioPipeline = AudioPipeline(),
+        glassesSourceLabel: String? = nil,
+        audioPipeline: AudioPipeline? = nil,
         backendURL: URL
     ) {
         self.glasses = glasses
-        self.audioPipeline = audioPipeline
+        self.glassesSourceLabel = glassesSourceLabel ?? String(describing: type(of: glasses))
+        self.audioPipeline = audioPipeline ?? AudioPipeline()
         self.backend = BackendClient(url: backendURL)
     }
 
@@ -64,6 +85,7 @@ final class SessionCoordinator: ObservableObject {
         appendDebug("Starting session")
 
         do {
+            startGlassesStateObserver()
             appendDebug("Starting glasses session")
             try await glasses.start()
             appendDebug("Glasses session ready")
@@ -74,17 +96,26 @@ final class SessionCoordinator: ObservableObject {
             status = .live
             appendDebug("Connected to backend")
         } catch {
+            await cleanupAfterFailedStart()
             status = .error(error.localizedDescription)
             appendDebug("Start failed: \(error.localizedDescription)")
         }
     }
 
     func stop() async {
+        await stopAssistantInputLoops()
         receiveTask?.cancel()
         receiveTask = nil
+        glassesStateTask?.cancel()
+        glassesStateTask = nil
+        // Best-effort: do not block stop on a stuck WebSocket send; disconnect ends the server session.
+        Task { [backend] in
+            try? await backend.send(.audioEnd)
+        }
         backend.close()
         await audioPipeline.stop()
-        await glasses.stop()
+        // Meta `StreamSession.stop()` can hang; never block the UI on it indefinitely.
+        await endGlassesSessionWithTimeout(seconds: 10)
         status = .ended
         appendDebug("Session stopped")
     }
@@ -113,13 +144,15 @@ final class SessionCoordinator: ObservableObject {
 
     func captureDebugPhoto() async {
         do {
+            appendDebug("Manual photo capture starting via \(glassesSourceLabel)")
             let jpeg = try await photoCapture.captureJPEG(from: glasses)
             lastPhoto = UIImage(data: jpeg)
             let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .userRequest)
+            appendDebug("Manual photo captured: \(jpeg.count) bytes via \(glassesSourceLabel)")
             try await backend.send(.photo(message))
-            appendDebug("Captured and sent photo")
+            appendDebug("Manual photo sent: trigger=\(message.trigger.rawValue), ts=\(message.timestampMs)")
         } catch {
-            appendDebug("Photo failed: \(error.localizedDescription)")
+            appendDebug("Manual photo failed via \(glassesSourceLabel): \(error.localizedDescription)")
         }
     }
 
@@ -166,17 +199,34 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
+    private func startGlassesStateObserver() {
+        glassesStateTask?.cancel()
+        glassesStateTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            for await state in glasses.stateStream {
+                appendDebug("Glasses: \(label(for: state))")
+            }
+        }
+    }
+
     private func handle(_ message: ServerMessage) async {
         switch message {
         case .ready(let ready):
             sessionResumeToken = ready.sessionResumeToken
             appendDebug("Backend ready: \(ready.model)")
+            await startAssistantInputLoops()
         case .sessionUpdate(let update):
             sessionResumeToken = update.sessionResumeToken
             appendDebug("Session token refreshed")
         case .audioChunk(let chunk):
             if let data = Data(base64Encoded: chunk.pcmBase64) {
+                // appendDebug("Received audio chunk: \(data.count) bytes @ \(chunk.sampleRate)Hz")
                 await audioPipeline.player.enqueue(pcm: data, sampleRate: chunk.sampleRate, turnID: chunk.turnID)
+            } else {
+                appendDebug("Received invalid audio chunk")
             }
         case .transcriptIn(let transcript):
             lastUserTranscript = transcript.text
@@ -185,6 +235,7 @@ final class SessionCoordinator: ObservableObject {
         case .toolEvent(let event):
             toolEventsLog.insert(event, at: 0)
         case .lookRequest(let request):
+            appendDebug("Received look_request: id=\(request.toolCallID), reason=\(request.reason)")
             await handleLookRequest(request)
         case .modelInterrupt(let interrupt):
             await audioPipeline.player.interrupt(turnID: interrupt.turnID)
@@ -197,7 +248,6 @@ final class SessionCoordinator: ObservableObject {
             }
         case .sessionEnd(let sessionEnd):
             appendDebug("Session ended: \(sessionEnd.reason)")
-            status = .ended
         case .echo(let echo):
             appendDebug("Echo: \(echo.received)")
         case .unknown(let type, _):
@@ -207,13 +257,259 @@ final class SessionCoordinator: ObservableObject {
 
     private func handleLookRequest(_ request: LookRequest) async {
         do {
+            appendDebug("look_request capture starting via \(glassesSourceLabel)")
             let jpeg = try await photoCapture.captureJPEG(from: glasses)
             lastPhoto = UIImage(data: jpeg)
             let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .toolLook, toolCallID: request.toolCallID)
+            appendDebug("look_request photo captured: \(jpeg.count) bytes via \(glassesSourceLabel)")
             try await backend.send(.photo(message))
-            appendDebug("Responded to look_request: \(request.reason)")
+            appendDebug("look_request photo sent: id=\(request.toolCallID), trigger=\(message.trigger.rawValue)")
         } catch {
-            appendDebug("look_request failed: \(error.localizedDescription)")
+            appendDebug("look_request failed via \(glassesSourceLabel): \(error.localizedDescription)")
+        }
+    }
+
+    private func startAssistantInputLoops() async {
+        startVisualContextLoop()
+        await startMicStreaming()
+    }
+
+    private func startMicStreaming() async {
+        guard micStreamingTask == nil else {
+            return
+        }
+
+        do {
+            try await audioPipeline.start()
+        } catch {
+            appendDebug("Mic streaming failed to start: \(error.localizedDescription)")
+            return
+        }
+
+        sentAudioChunkCount = 0
+        isMicStreaming = true
+        appendDebug("Mic streaming started")
+        micStreamingTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                isMicStreaming = false
+            }
+
+            for await chunk in audioPipeline.micCapture.chunks {
+                if Task.isCancelled {
+                    break
+                }
+
+                do {
+                    let message = AudioFrame(
+                        pcmBase64: chunk.base64EncodedString(),
+                        sampleRate: Int(MicCapture.targetSampleRate)
+                    )
+                    try await backend.send(.audio(message))
+                    sentAudioChunkCount += 1
+                    if sentAudioChunkCount == 1 || sentAudioChunkCount.isMultiple(of: 50) {
+                        appendDebug("Mic audio sent: \(sentAudioChunkCount) chunks")
+                    }
+                } catch {
+                    appendDebug("Mic audio send failed: \(error.localizedDescription)")
+                    break
+                }
+            }
+        }
+    }
+
+    private func startVisualContextLoop() {
+        guard visualContextTask == nil else {
+            return
+        }
+
+        sentVisualFrameCount = 0
+        lastVisualPreviewUpdateSeconds = 0
+        isVisualContextStreaming = true
+        visualContextSourceLabel = "Starting"
+        appendDebug("Auto visual context started via \(glassesSourceLabel)")
+        visualContextTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                isVisualContextStreaming = false
+                visualContextSourceLabel = "Idle"
+            }
+
+            let events = visualContextEvents(
+                from: glasses.videoFrames(at: 1),
+                firstFrameTimeoutNanoseconds: visualStreamFirstFrameTimeoutNanoseconds
+            )
+
+            for await event in events {
+                if Task.isCancelled {
+                    break
+                }
+
+                switch event {
+                case .frame(let image):
+                    visualContextSourceLabel = "Video stream"
+                    await sendAutoVisualFrame(image)
+                case .firstFrameTimeout:
+                    guard sentVisualFrameCount == 0 else {
+                        continue
+                    }
+                    appendDebug("Auto visual stream timed out; trying still capture fallback")
+                    let shouldKeepFallback = await runStillCaptureVisualFallback()
+                    if shouldKeepFallback {
+                        return
+                    }
+                    visualContextSourceLabel = "Waiting for video stream"
+                    appendDebug("Still capture fallback unavailable; waiting for video stream")
+                }
+            }
+        }
+    }
+
+    private func sendAutoVisualFrame(_ image: UIImage) async {
+        do {
+            let jpeg = try photoCapture.resizeAndEncode(image)
+            await sendAutoVisualJPEG(jpeg, previewImage: image)
+        } catch {
+            appendDebug("Auto visual frame failed via \(glassesSourceLabel): \(error.localizedDescription)")
+        }
+    }
+
+    private func runStillCaptureVisualFallback() async -> Bool {
+        visualContextSourceLabel = "Still capture fallback"
+
+        while !Task.isCancelled {
+            do {
+                let rawPhoto = try await glasses.capturePhoto()
+                let capturedImage = UIImage(data: rawPhoto)
+                let jpeg = try capturedImage.map { try photoCapture.resizeAndEncode($0) } ?? rawPhoto
+                await sendAutoVisualJPEG(jpeg, previewImage: capturedImage)
+            } catch is CancellationError {
+                break
+            } catch GlassesSessionError.photoCaptureRejected {
+                appendDebug("Still capture fallback rejected via \(glassesSourceLabel); disabling fallback")
+                return false
+            } catch {
+                appendDebug("Still capture fallback failed via \(glassesSourceLabel): \(error.localizedDescription)")
+            }
+
+            try? await Task.sleep(nanoseconds: visualFallbackIntervalNanoseconds)
+        }
+
+        return true
+    }
+
+    private func sendAutoVisualJPEG(_ jpeg: Data, previewImage: UIImage?) async {
+        let preview = UIImage(data: jpeg) ?? previewImage
+        if let preview, shouldUpdateVisualPreview() {
+            lastPhoto = preview
+            visualContextFrameCount += 1
+        } else {
+            appendDebug(preview == nil ? "Auto visual preview decode failed; sending frame anyway" : "Auto visual preview skipped; sending frame")
+        }
+        let message = PhotoFrame(jpegBase64: jpeg.base64EncodedString(), trigger: .auto)
+        appendDebug("Auto visual frame prepared: \(jpeg.count) bytes via \(glassesSourceLabel)")
+
+        do {
+            try await backend.send(.photo(message))
+            sentVisualFrameCount += 1
+            appendDebug("Auto visual frame sent: \(jpeg.count) bytes via \(glassesSourceLabel)")
+        } catch {
+            appendDebug("Auto visual frame send failed via \(glassesSourceLabel): \(error.localizedDescription)")
+        }
+    }
+
+    private func shouldUpdateVisualPreview() -> Bool {
+        let now = Date().timeIntervalSince1970
+        guard visualContextFrameCount > 0 else {
+            lastVisualPreviewUpdateSeconds = now
+            return true
+        }
+        guard now - lastVisualPreviewUpdateSeconds >= visualPreviewUpdateIntervalSeconds else {
+            return false
+        }
+        lastVisualPreviewUpdateSeconds = now
+        return true
+    }
+
+    private func visualContextEvents(
+        from frames: AsyncStream<UIImage>,
+        firstFrameTimeoutNanoseconds: UInt64
+    ) -> AsyncStream<VisualContextEvent> {
+        AsyncStream { continuation in
+            let timeoutTask = Task {
+                try? await Task.sleep(nanoseconds: firstFrameTimeoutNanoseconds)
+                guard !Task.isCancelled else {
+                    return
+                }
+                continuation.yield(.firstFrameTimeout)
+            }
+
+            let frameTask = Task {
+                for await image in frames {
+                    timeoutTask.cancel()
+                    continuation.yield(.frame(image))
+                }
+                continuation.finish()
+            }
+
+            continuation.onTermination = { _ in
+                timeoutTask.cancel()
+                frameTask.cancel()
+            }
+        }
+    }
+
+    private func stopAssistantInputLoops() async {
+        micStreamingTask?.cancel()
+        micStreamingTask = nil
+        visualContextTask?.cancel()
+        visualContextTask = nil
+        isMicStreaming = false
+        isVisualContextStreaming = false
+        visualContextSourceLabel = "Idle"
+    }
+
+    private func cleanupAfterFailedStart() async {
+        micStreamingTask?.cancel()
+        micStreamingTask = nil
+        visualContextTask?.cancel()
+        visualContextTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        glassesStateTask?.cancel()
+        glassesStateTask = nil
+        isMicStreaming = false
+        isVisualContextStreaming = false
+        visualContextSourceLabel = "Idle"
+        backend.close()
+        await audioPipeline.stop()
+        await glasses.stop()
+    }
+
+    /// Waits for `glasses.stop()` or `seconds` elapse, whichever is first, so **Stop** always completes.
+    private func endGlassesSessionWithTimeout(seconds: TimeInterval) async {
+        let result = await withTaskGroup(of: String.self) { group -> String in
+            group.addTask { @MainActor in
+                await self.glasses.stop()
+                return "ok"
+            }
+            group.addTask {
+                let nanos = UInt64(seconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanos)
+                return "timeout"
+            }
+            let first = await group.next()!
+            group.cancelAll()
+            return first
+        }
+        if result == "timeout" {
+            appendDebug(
+                "Glasses: stop() exceeded \(Int(seconds))s; UI reset. If Start Assistant fails, force-quit the app and retry."
+            )
         }
     }
 
@@ -222,6 +518,23 @@ final class SessionCoordinator: ObservableObject {
         debugLog.insert(line, at: 0)
         if debugLog.count > 100 {
             debugLog.removeLast(debugLog.count - 100)
+        }
+    }
+
+    private func label(for state: GlassesState) -> String {
+        switch state {
+        case .stopped:
+            return "stopped"
+        case .connecting:
+            return "connecting"
+        case .ready:
+            return "ready"
+        case .streaming:
+            return "streaming"
+        case .paused:
+            return "paused"
+        case .error(let message):
+            return "error - \(message)"
         }
     }
 }

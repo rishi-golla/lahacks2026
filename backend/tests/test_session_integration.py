@@ -96,18 +96,7 @@ class GeminiSessionIntegrationTests(unittest.TestCase):
             self.assertEqual(websocket.receive_json()["type"], "ready")
 
             websocket.send_json({"type": "text", "text": "hello Gemini"})
-        self.assertEqual(
-            recorder.live_session.client_content_calls,
-            [
-                (
-                    {
-                        "role": "user",
-                        "parts": [{"text": "hello Gemini"}],
-                    },
-                    True,
-                )
-            ],
-        )
+        self.assertEqual(recorder.live_session.realtime_input_calls, [{"text": "hello Gemini"}])
 
     def test_client_disconnect_closes_gemini_live_context_manager(self) -> None:
         recorder = _GeminiLiveRecorder()

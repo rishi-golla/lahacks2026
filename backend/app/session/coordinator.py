@@ -8,9 +8,13 @@ tool-routing work.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 from dataclasses import asdict, replace
 import json
 import logging
+import os
+from pathlib import Path
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -19,6 +23,7 @@ from uuid import uuid4
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .event_mapper import EventMapperState, complete_output_turn, map_server_event
+from .jpeg_sanity import is_plausible_jpeg
 from .look_loop import LookLoop, LookRequest, UnknownLookRequestError
 from .protocol import (
     ClientMessage,
@@ -30,6 +35,7 @@ from .protocol import (
     parse_client_message,
 )
 from .resume_store import InMemoryResumeStore, RestoreOutcome, TurnStateSnapshot
+from .settings import BACKEND_ROOT, get_session_settings
 from .state import SessionLifecycleState, StateTransitionError
 
 log = logging.getLogger(__name__)
@@ -342,11 +348,36 @@ class SessionCoordinator:
         state_backend: SessionStateBackend | None = None,
         tool_router: ToolRouter | None = None,
         resume_store: InMemoryResumeStore | None = None,
+        photo_dump_dir: str | Path | None = None,
     ) -> None:
         self._live_adapter = live_adapter or self._build_default_live_adapter()
         self._state_backend = state_backend or InMemorySessionStateBackend()
         self._tool_router = tool_router or NullToolRouter()
         self._resume_store = resume_store or _DEFAULT_RESUME_STORE
+        configured_photo_dump_dir = (
+            Path(photo_dump_dir) if photo_dump_dir is not None else self._configured_photo_dump_dir()
+        )
+        self._photo_dump_dir = configured_photo_dump_dir
+        self._session_ids_warned_no_photo_dump: set[str] = set()
+        if self._photo_dump_dir is not None:
+            try:
+                self._photo_dump_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                log.error(
+                    "session coordinator photo dump directory not usable path=%s error=%s",
+                    self._photo_dump_dir,
+                    exc,
+                )
+                self._photo_dump_dir = None
+        settings_snapshot = get_session_settings()
+        log.info(
+            "session coordinator init photo_dump=%s env_SESSION_PHOTO_DUMP_DIR=%r settings_SESSION_PHOTO_DUMP_DIR=%r backend_root=%s cwd=%s",
+            str(self._photo_dump_dir) if self._photo_dump_dir is not None else "disabled",
+            os.environ.get("SESSION_PHOTO_DUMP_DIR", ""),
+            settings_snapshot.session_photo_dump_dir,
+            str(BACKEND_ROOT),
+            os.getcwd(),
+        )
 
     async def run(self, ws: WebSocket) -> None:
         await ws.accept()
@@ -406,7 +437,20 @@ class SessionCoordinator:
             await sender.send(exc.to_server_error().to_payload())
             return
 
-        log.info("session received session_id=%s type=%s", session.session_id, message_type)
+        if message_type == "audio":
+            log.debug("session received session_id=%s type=%s", session.session_id, message_type)
+        else:
+            log.info("session received session_id=%s type=%s", session.session_id, message_type)
+        if isinstance(message, PhotoFrame):
+            log.info(
+                "session received photo session_id=%s trigger=%s tool_call_id=%s b64_chars=%s ts_ms=%s",
+                session.session_id,
+                message.trigger.value,
+                message.tool_call_id,
+                len(message.jpeg_b64),
+                message.ts_ms,
+            )
+            self._dump_photo_if_enabled(session, message)
         session.lifecycle_state = next_state
 
         if isinstance(message, HelloMessage):
@@ -416,7 +460,20 @@ class SessionCoordinator:
         if isinstance(message, PhotoFrame) and message.trigger is PhotoTrigger.TOOL_LOOK:
             try:
                 resolved = session.look_loop.complete_request(message)
+                log.info(
+                    "session completed look_request session_id=%s tool_call_id=%s photo_b64_chars=%s photo_ts_ms=%s",
+                    session.session_id,
+                    resolved.tool_call_id,
+                    len(resolved.photo_jpeg_b64 or ""),
+                    resolved.photo_ts_ms,
+                )
             except (UnknownLookRequestError, ValueError) as exc:
+                log.warning(
+                    "session failed look_request photo correlation session_id=%s tool_call_id=%s error=%s",
+                    session.session_id,
+                    message.tool_call_id,
+                    exc,
+                )
                 await self._send_error(
                     sender,
                     "protocol_violation",
@@ -479,6 +536,69 @@ class SessionCoordinator:
         from .live_adapter import build_live_adapter
 
         return build_live_adapter()
+
+    @staticmethod
+    def _configured_photo_dump_dir() -> Path | None:
+        dump_dir = get_session_settings().session_photo_dump_dir
+        if not dump_dir:
+            return None
+        path = Path(dump_dir)
+        if not path.is_absolute():
+            path = BACKEND_ROOT / path
+        return path
+
+    def _dump_photo_if_enabled(self, session: SessionContext, photo: PhotoFrame) -> None:
+        if self._photo_dump_dir is None:
+            if session.session_id not in self._session_ids_warned_no_photo_dump:
+                self._session_ids_warned_no_photo_dump.add(session.session_id)
+                log.warning(
+                    "session photo received but dump is disabled: set SESSION_PHOTO_DUMP_DIR in %s and restart the server. session_id=%s",
+                    BACKEND_ROOT / ".env",
+                    session.session_id,
+                )
+            return
+
+        try:
+            photo_bytes = base64.b64decode(photo.jpeg_b64, validate=True)
+        except binascii.Error:
+            log.warning(
+                "session photo dump skipped invalid base64 session_id=%s trigger=%s ts_ms=%s",
+                session.session_id,
+                photo.trigger.value,
+                photo.ts_ms,
+            )
+            return
+
+        dump_dir = self._photo_dump_dir / session.session_id
+        try:
+            dump_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.error("session photo dump mkdir failed path=%s error=%s", dump_dir, exc)
+            return
+
+        safe_trigger = "".join(
+            character if character.isalnum() or character in {"-", "_"} else "_"
+            for character in photo.trigger.value
+        )
+        path = dump_dir / f"{photo.ts_ms}-{safe_trigger}.jpg"
+        if not is_plausible_jpeg(photo_bytes):
+            log.warning(
+                "session photo dump skipped: not a plausible complete JPEG (bytes=%s). "
+                "The common test stub base64 /9j/ and ts_ms=456 are not real images; "
+                "if you only see that on the server, a test client is hitting /session, not the iOS app. "
+                "session_id=%s trigger=%s ts_ms=%s",
+                len(photo_bytes),
+                session.session_id,
+                photo.trigger.value,
+                photo.ts_ms,
+            )
+            return
+        try:
+            path.write_bytes(photo_bytes)
+        except OSError as exc:
+            log.error("session photo dump write failed path=%s error=%s", path, exc)
+            return
+        log.info("session dumped photo session_id=%s path=%s bytes=%s", session.session_id, path, len(photo_bytes))
 
     @staticmethod
     def _client_label(ws: WebSocket) -> str:

@@ -1,19 +1,16 @@
 import AVFoundation
 import Foundation
 
+@MainActor
 final class PCMPlayer {
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var interruptedTurnIDs = Set<String>()
     private var isAttached = false
     private var connectedSampleRate: Int?
+    private(set) var scheduledBufferCount = 0
 
     func start(sampleRate: Int = 24_000) throws {
-        if !isAttached {
-            audioEngine.attach(playerNode)
-            isAttached = true
-        }
-
         try connectIfNeeded(sampleRate: sampleRate)
     }
 
@@ -34,6 +31,7 @@ final class PCMPlayer {
             playerNode.play()
         }
         playerNode.scheduleBuffer(buffer, completionHandler: nil)
+        scheduledBufferCount += 1
     }
 
     func interrupt(turnID: String) async {
@@ -46,6 +44,8 @@ final class PCMPlayer {
         interruptedTurnIDs.removeAll()
         playerNode.stop()
         audioEngine.stop()
+        connectedSampleRate = nil
+        scheduledBufferCount = 0
     }
 
     private func makeBuffer(pcm: Data, sampleRate: Int) -> AVAudioPCMBuffer? {
@@ -70,6 +70,11 @@ final class PCMPlayer {
     }
 
     private func connectIfNeeded(sampleRate: Int) throws {
+        if !isAttached {
+            audioEngine.attach(playerNode)
+            isAttached = true
+        }
+
         if connectedSampleRate != sampleRate {
             if audioEngine.isRunning {
                 playerNode.stop()
@@ -82,7 +87,6 @@ final class PCMPlayer {
                 channels: 1,
                 interleaved: false
             )!
-            audioEngine.disconnectNodeOutput(playerNode)
             audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
             connectedSampleRate = sampleRate
         }

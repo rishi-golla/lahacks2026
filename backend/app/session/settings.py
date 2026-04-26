@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from functools import lru_cache
+from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# Resolve `backend/.env` so settings load when the process CWD is not `backend/`.
+BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class LiveBackend(StrEnum):
@@ -18,23 +22,41 @@ class SessionSettings(BaseSettings):
     """Settings used to select and configure the live session backend."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=BACKEND_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     live_backend: LiveBackend = Field(default=LiveBackend.ECHO, alias="LIVE_BACKEND")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     gemini_live_model: str = Field(
-        default="gemini-live-2.5-flash-preview",
+        default="gemini-2.5-flash-native-audio-preview-12-2025",
         alias="GEMINI_LIVE_MODEL",
     )
     gemini_api_version: str = Field(default="v1alpha", alias="GEMINI_API_VERSION")
-    gemini_response_modalities: tuple[str, ...] = Field(
-        default=("TEXT",),
+    gemini_response_modalities: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=("AUDIO",),
         alias="GEMINI_RESPONSE_MODALITIES",
     )
+    session_photo_dump_dir: str | None = Field(default=None, alias="SESSION_PHOTO_DUMP_DIR")
+
+    @field_validator("session_photo_dump_dir", mode="before")
+    @classmethod
+    def normalize_photo_dump_dir(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        if not stripped or stripped.lower() in {"none", "null", "off", "0"}:
+            return None
+        if (stripped.startswith('"') and stripped.endswith('"')) or (
+            stripped.startswith("'") and stripped.endswith("'")
+        ):
+            stripped = stripped[1:-1].strip() or None
+        return stripped
 
     @field_validator("gemini_response_modalities", mode="before")
     @classmethod
@@ -50,8 +72,12 @@ class SessionSettings(BaseSettings):
         return self
 
 
-@lru_cache(maxsize=1)
 def get_session_settings() -> SessionSettings:
-    """Load and cache live session settings from the environment."""
+    """Load live session settings from the environment and `backend/.env`.
+
+    Intentionally not cached: a cached singleton broke opt-in features toggled
+    in `.env` (e.g. `SESSION_PHOTO_DUMP_DIR`) until full process restart, and
+    could miss `backend/.env` when the process CWD was not `backend/`.
+    """
 
     return SessionSettings()

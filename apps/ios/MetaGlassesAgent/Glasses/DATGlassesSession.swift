@@ -1,3 +1,4 @@
+import Foundation
 import MWDATCamera
 import MWDATCore
 import UIKit
@@ -18,6 +19,9 @@ final class DATGlassesSession: GlassesSession {
     private var photoContinuation: CheckedContinuation<Data, Error>?
     private var photoTimeoutTask: Task<Void, Never>?
     private var videoFrameContinuation: AsyncStream<UIImage>.Continuation?
+    /// Target max frames/sec for `videoFrames(at:)`; the SDK stream can be 24fps, so we must throttle here.
+    private var videoFrameTargetFps: Double = 1
+    private var lastVideoFrameYieldUptime: TimeInterval = 0
 
     init(wearables: WearablesInterface = Wearables.shared) {
         self.wearables = wearables
@@ -32,12 +36,15 @@ final class DATGlassesSession: GlassesSession {
     func start() async throws {
         continuation.yield(.connecting)
 
-        var cameraStatus = try await wearables.checkPermissionStatus(.camera)
-        if cameraStatus != .granted {
-            cameraStatus = try await wearables.requestPermission(.camera)
-        }
-        guard cameraStatus == .granted else {
-            throw GlassesSessionError.cameraPermissionDenied
+        do {
+            let cameraStatus = try await wearables.checkPermissionStatus(.camera)
+            guard cameraStatus == .granted else {
+                throw GlassesSessionError.cameraPermissionDenied
+            }
+        } catch let error as GlassesSessionError {
+            throw error
+        } catch {
+            throw GlassesSessionError.cameraPermissionUnavailable(error.localizedDescription)
         }
 
         let session = try wearables.createSession(deviceSelector: deviceSelector)
@@ -59,9 +66,6 @@ final class DATGlassesSession: GlassesSession {
         streamSession = stream
         setupListeners(for: stream)
         await stream.start()
-        guard await waitForStreamReady(timeoutSeconds: 10) else {
-            throw GlassesSessionError.streamSessionUnavailable
-        }
 
         continuation.yield(.ready)
     }
@@ -88,7 +92,7 @@ final class DATGlassesSession: GlassesSession {
 
     func capturePhoto() async throws -> Data {
         guard let streamSession else {
-            throw GlassesSessionError.streamSessionUnavailable
+            throw GlassesSessionError.cameraStreamNotRunning
         }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -116,7 +120,9 @@ final class DATGlassesSession: GlassesSession {
     }
 
     func videoFrames(at fps: Double) -> AsyncStream<UIImage> {
-        AsyncStream { continuation in
+        videoFrameTargetFps = max(fps, 0.1)
+        lastVideoFrameYieldUptime = 0
+        return AsyncStream { continuation in
             videoFrameContinuation = continuation
 
             continuation.onTermination = { _ in
@@ -239,15 +245,23 @@ final class DATGlassesSession: GlassesSession {
 
         videoFrameListenerToken = stream.videoFramePublisher.listen { [weak self] frame in
             Task { @MainActor in
-                if let image = frame.makeUIImage() {
-                    self?.videoFrameContinuation?.yield(image)
+                guard let self, let image = frame.makeUIImage() else {
+                    return
+                }
+                // Match `MockGlassesSession`: only yield at most `videoFrameTargetFps` frames per second
+                // (the hardware stream is often 24fps; without this, we spam Gemini and the network.)
+                let minInterval = 1.0 / self.videoFrameTargetFps
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.lastVideoFrameYieldUptime == 0 || now - self.lastVideoFrameYieldUptime >= minInterval {
+                    self.lastVideoFrameYieldUptime = now
+                    self.videoFrameContinuation?.yield(image)
                 }
             }
         }
 
         errorListenerToken = stream.errorPublisher.listen { [weak self] error in
             Task { @MainActor in
-                self?.continuation.yield(.error(String(describing: error)))
+                self?.continuation.yield(.error(Self.describeStreamError(error)))
             }
         }
 
@@ -262,6 +276,33 @@ final class DATGlassesSession: GlassesSession {
                 self.photoContinuation = nil
             }
         }
+    }
+
+    /// Include `String(reflecting:)` so enum cases (e.g. `deviceNotConnected(id)`) appear; add NSError for codes.
+    private static func describeStreamError(_ error: Error) -> String {
+        let ns = error as NSError
+        let typeName = String(describing: Swift.type(of: error))
+        // Full case + associated values, unlike `localizedDescription` / NSError code alone.
+        let reflected = String(reflecting: error)
+        var parts: [String] = [reflected, typeName]
+        let desc = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !desc.isEmpty {
+            parts.append(desc)
+        }
+        if !ns.domain.isEmpty {
+            parts.append("NSError domain=\(ns.domain) code=\(ns.code)")
+        }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append(
+                "underlying: \(underlying.domain) (\(underlying.code)) \(underlying.localizedDescription)"
+            )
+        }
+        if reflected.contains("internalError") {
+            parts.append(
+                "hint: SDK uses internalError when details are hidden; check Xcode console (filter: MediaStreamSession, ActivityManager, XMS) and try restarting glasses + Meta AI app."
+            )
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func clearListeners() {
@@ -280,7 +321,7 @@ final class DATGlassesSession: GlassesSession {
         case .stopped:
             continuation.yield(.ready)
         case .waitingForDevice, .starting, .stopping:
-            break
+            continuation.yield(.connecting)
         }
     }
 }

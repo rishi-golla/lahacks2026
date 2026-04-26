@@ -1,0 +1,21 @@
+{
+  "skill_name": "reminder_agent",
+  "description": "Create a reminder with a time reference and short action summary.",
+  "trigger_phrases": [
+    "remind me",
+    "set a reminder",
+    "remember to",
+    "reminder for later"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "command": "string",
+    "datetime": "string",
+    "details": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}

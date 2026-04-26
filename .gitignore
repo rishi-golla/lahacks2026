@@ -11,6 +11,8 @@ __pycache__/
 .memory.sqlite
 *.sqlite
 *.sqlite-journal
+debug-photos/
+backend/debug-photos/
 
 # macOS
 .DS_Store
