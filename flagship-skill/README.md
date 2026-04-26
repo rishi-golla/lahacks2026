@@ -142,3 +142,18 @@ The agent accepts either JSON or natural language. JSON is preferred:
 ## Safety
 
 The Browserbase flow intentionally stops at checkout review. The implementation never clicks a final place-order button.
+
+
+## Runnning it
+
+```
+cd flagship-skill
+python agent.py
+```
+
+in separate terminal:
+
+```
+cd flagship-skill
+uv run purchase-worker
+```
