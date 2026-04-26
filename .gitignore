@@ -29,4 +29,4 @@ DerivedData/
 # External repos (for documentation)
 external-repos/
 
-AGENTS.md
+agent.md
