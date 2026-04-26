@@ -61,3 +61,55 @@ a {
     var(--glass-fill);
   backdrop-filter: blur(26px);
 }
+
+.identity-button {
+  display: inline-flex;
+  min-width: 18rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  border-radius: 999px;
+  padding: 1rem 1.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  backdrop-filter: blur(24px);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.identity-button:hover {
+  transform: translateY(-1px);
+}
+
+.identity-button-idle {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)),
+    rgba(10, 10, 10, 0.45);
+  color: #f8f2d8;
+  box-shadow:
+    0 0 0 1px rgba(233, 224, 177, 0.04) inset,
+    0 12px 40px rgba(0, 0, 0, 0.28);
+}
+
+.identity-button-idle:hover {
+  border-color: rgba(233, 224, 177, 0.32);
+  box-shadow:
+    0 0 0 1px rgba(233, 224, 177, 0.08) inset,
+    0 0 46px rgba(233, 224, 177, 0.18);
+}
+
+.identity-button-connected {
+  border: 1px solid rgba(123, 149, 109, 0.34);
+  background:
+    linear-gradient(180deg, rgba(117, 148, 101, 0.12), rgba(117, 148, 101, 0.04)),
+    rgba(10, 15, 10, 0.5);
+  color: #ecf2e5;
+  box-shadow: 0 0 28px rgba(117, 148, 101, 0.1);
+}

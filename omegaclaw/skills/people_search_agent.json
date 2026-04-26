@@ -1,0 +1,19 @@
+{
+  "skill_name": "people_search_agent",
+  "description": "Search for a person, contact, or prospect and return concise context for outreach or follow-up.",
+  "trigger_phrases": [
+    "find this person",
+    "people search",
+    "look up this person",
+    "who should I contact"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "query": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}

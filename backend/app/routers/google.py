@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 
 from ..google.models import LinkedGoogleUser
-from ..google.oauth import get_google_oauth_service
+from ..google.oauth import GoogleOAuthSettings, get_google_oauth_service
 from ..google.store import google_state_store
 
 
 router = APIRouter(prefix="/google", tags=["google"])
+logger = logging.getLogger(__name__)
+
+
+def get_edith_dashboard_url(status: str = "connected") -> str:
+    base_url = GoogleOAuthSettings().edith_app_url.rstrip("/")
+    return f"{base_url}/dashboard?google={status}"
 
 
 @router.get("/status")
@@ -45,13 +53,14 @@ def google_connect_start() -> RedirectResponse:
 
 
 @router.get("/connect/callback")
-def google_connect_callback(code: str) -> dict[str, object]:
+def google_connect_callback(code: str, state: str) -> RedirectResponse:
     service = get_google_oauth_service()
     if service is None:
         raise HTTPException(status_code=503, detail="google_oauth_not_configured")
-    linked_user = LinkedGoogleUser.model_validate(service.exchange_code(code))
+    try:
+        linked_user = LinkedGoogleUser.model_validate(service.exchange_code(code, state))
+    except Exception:
+        logger.exception("google_oauth_callback_failed")
+        return RedirectResponse(url=get_edith_dashboard_url("error"))
     google_state_store.set_active_user(linked_user)
-    return {
-        "connected": True,
-        "active_user": linked_user.public_dict(),
-    }
+    return RedirectResponse(url=get_edith_dashboard_url("connected"))

@@ -1,0 +1,22 @@
+{
+  "skill_name": "mail_sending_agent",
+  "description": "Draft or send an email through a dedicated outbound mail agent after explicit user intent.",
+  "trigger_phrases": [
+    "send this email",
+    "mail this person",
+    "draft an email",
+    "send mail"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "command": "string",
+    "recipient": "string",
+    "subject": "string",
+    "body": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}

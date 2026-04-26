@@ -26,6 +26,11 @@ class OmegaClawExtensionPointTests(unittest.TestCase):
         self.assertTrue(callable(agentverse_bridge.invoke_google_search))
         self.assertTrue(callable(agentverse_bridge.invoke_google_calendar))
         self.assertTrue(callable(agentverse_bridge.invoke_gmail))
+        self.assertTrue(callable(agentverse_bridge.invoke_people_search_agent))
+        self.assertTrue(callable(agentverse_bridge.invoke_mail_sending_agent))
+        self.assertTrue(callable(agentverse_bridge.invoke_task_scheduling_agent))
+        self.assertTrue(callable(agentverse_bridge.invoke_reminder_agent))
+        self.assertTrue(callable(agentverse_bridge.invoke_purchase_agent))
 
     def test_channels_metta_contains_required_wiring(self) -> None:
         content = (REPO_ROOT / "omegaclaw" / "src" / "channels.metta").read_text(encoding="utf-8")
@@ -45,8 +50,14 @@ class OmegaClawExtensionPointTests(unittest.TestCase):
         self.assertIn("identify-person", content)
         self.assertIn("google-search", content)
         self.assertIn("google-calendar", content)
+        self.assertIn("people-search-agent", content)
+        self.assertIn("mail-sending-agent", content)
+        self.assertIn("task-scheduling-agent", content)
+        self.assertIn("reminder-agent", content)
+        self.assertIn("purchase-agent", content)
         self.assertIn("(= (identify-person $name $organization $title)", content)
         self.assertIn("(agentverse_bridge.invoke_identify_person", content)
+        self.assertIn("(agentverse_bridge.invoke_people_search_agent", content)
 
 
 if __name__ == "__main__":

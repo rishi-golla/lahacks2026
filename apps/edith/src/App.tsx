@@ -1,301 +1,491 @@
-import { motion } from 'framer-motion'
+import { motion, useInView } from 'framer-motion'
 import {
   ArrowRight,
-  CalendarClock,
-  CheckCircle2,
+  ArrowLeft,
+  Check,
   Glasses,
-  Mail,
-  RefreshCcw,
   ShieldCheck,
-  TimerReset,
-  Unplug,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import heroImage from './assets/hero.png'
 import {
   disconnectGoogle,
-  fetchGoogleHistory,
   fetchGoogleStatus,
   getGoogleConnectUrl,
   type GoogleStatus,
-  type HistoryEvent,
 } from './lib/api'
 
-const ease: [number, number, number, number] = [0.16, 1, 0.3, 1]
+const heroVideoUrl =
+  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260405_170732_8a9ccda6-5cff-4628-b164-059c500a2b41.mp4'
 
-const workflowCards = [
+const featureVideoUrl =
+  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260406_133058_0504132a-0cf3-4450-a370-8ea3b05c95d4.mp4'
+
+const navItems = ['Our story', 'Collective', 'Workshops', 'Programs', 'Inquiries']
+
+const featureCards = [
   {
-    icon: Mail,
-    title: 'Gmail dispatch',
-    body: 'Let the glasses draft and trigger outbound email after the linked user confirms their identity.',
+    number: '01',
+    title: 'Project Storyboard.',
+    image:
+      'https://images.higgs.ai/?default=1&output=webp&url=https%3A%2F%2Fd8j0ntlcm91z4.cloudfront.net%2Fuser_38xzZboKViGWJOttwIXH07lWA1P%2Fhf_20260405_171918_4a5edc79-d78f-4637-ac8b-53c43c220606.png&w=1280&q=85',
+    items: [
+      'Generate boards for every beat with cinematic continuity.',
+      'Lock camera logic, palette, and composition before production.',
+      'Pressure-test pacing while the story is still malleable.',
+      'Share visual intent with collaborators in a readable sequence.',
+    ],
   },
   {
-    icon: CalendarClock,
-    title: 'Calendar control',
-    body: 'Create and route scheduling requests through the same shared pair of glasses without re-pairing hardware.',
+    number: '02',
+    title: 'Smart Critiques.',
+    image:
+      'https://images.higgs.ai/?default=1&output=webp&url=https%3A%2F%2Fd8j0ntlcm91z4.cloudfront.net%2Fuser_38xzZboKViGWJOttwIXH07lWA1P%2Fhf_20260405_171741_ed9845ab-f5b2-4018-8ce7-07cc01823522.png&w=1280&q=85',
+    items: [
+      'Receive AI analysis shaped like creative notes, not reports.',
+      'Spot weak scenes, uneven rhythm, and visual drift fast.',
+      'Bridge review across your tools without breaking flow.',
+    ],
   },
   {
-    icon: TimerReset,
-    title: 'Task memory',
-    body: 'Turn spoken reminders and to-dos into Google-backed actions tied to the currently connected site user.',
+    number: '03',
+    title: 'Immersion Capsule.',
+    image:
+      'https://images.higgs.ai/?default=1&output=webp&url=https%3A%2F%2Fd8j0ntlcm91z4.cloudfront.net%2Fuser_38xzZboKViGWJOttwIXH07lWA1P%2Fhf_20260405_171809_f56666dc-c099-4778-ad82-9ad4f209567b.png&w=1280&q=85',
+    items: [
+      'Silence notifications when the work enters deep-focus mode.',
+      'Shape atmosphere with ambient soundscapes tuned to the scene.',
+      'Sync schedules so immersion becomes a ritual, not an accident.',
+    ],
   },
 ] as const
 
-function formatTimestamp(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date)
+const ease: [number, number, number, number] = [0.16, 1, 0.3, 1]
+
+type Segment = {
+  text: string
+  className?: string
 }
 
-function DashboardHeader({
+type WordsPullUpProps = {
+  text: string
+  className?: string
+  showAsterisk?: boolean
+}
+
+type WordsPullUpMultiStyleProps = {
+  segments: readonly Segment[]
+  className?: string
+}
+
+type FeatureCardProps = {
+  number: string
+  title: string
+  image: string
+  items: readonly string[]
+  index: number
+}
+
+function navigate(path: string) {
+  window.history.pushState({}, '', path)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+function WordsPullUp({ text, className, showAsterisk = false }: WordsPullUpProps) {
+  const ref = useRef<HTMLSpanElement | null>(null)
+  const inView = useInView(ref, { once: true, margin: '-100px' })
+  const words = text.split(' ')
+
+  return (
+    <span ref={ref} className={`inline-flex flex-wrap ${className ?? ''}`}>
+      {words.map((word, index) => {
+        const isLastWord = index === words.length - 1
+
+        return (
+          <span key={`${word}-${index}`} className="overflow-hidden pb-[0.12em]">
+            <motion.span
+              className="relative inline-block"
+              initial={{ y: 20, opacity: 0 }}
+              animate={inView ? { y: 0, opacity: 1 } : { y: 20, opacity: 0 }}
+              transition={{ duration: 0.8, delay: index * 0.08, ease }}
+            >
+              {word}
+              {showAsterisk && isLastWord ? (
+                <span className="absolute -right-[0.3em] top-[0.65em] text-[0.31em]">*</span>
+              ) : null}
+            </motion.span>
+            {index < words.length - 1 ? <span>&nbsp;</span> : null}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+function WordsPullUpMultiStyle({ segments, className }: WordsPullUpMultiStyleProps) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const inView = useInView(ref, { once: true, margin: '-100px' })
+  const words = segments.flatMap((segment) =>
+    segment.text.split(' ').map((word) => ({
+      word,
+      className: segment.className ?? '',
+    })),
+  )
+
+  return (
+    <div ref={ref} className={`inline-flex flex-wrap justify-center ${className ?? ''}`}>
+      {words.map(({ word, className: wordClass }, index) => (
+        <span key={`${word}-${index}`} className="overflow-hidden pb-[0.12em]">
+          <motion.span
+            className={`inline-block ${wordClass}`}
+            initial={{ y: 20, opacity: 0 }}
+            animate={inView ? { y: 0, opacity: 1 } : { y: 20, opacity: 0 }}
+            transition={{ duration: 0.8, delay: index * 0.08, ease }}
+          >
+            {word}
+          </motion.span>
+          {index < words.length - 1 ? <span>&nbsp;</span> : null}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function FeatureCard({ number, title, image, items, index }: FeatureCardProps) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const inView = useInView(ref, { once: true, margin: '-100px' })
+
+  return (
+    <motion.article
+      ref={ref}
+      initial={{ opacity: 0, scale: 0.95, y: 18 }}
+      animate={inView ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.95, y: 18 }}
+      transition={{ duration: 0.85, delay: index * 0.15, ease: [0.22, 1, 0.36, 1] }}
+      className="flex h-full min-h-[280px] flex-col justify-between rounded-[1.75rem] bg-[#212121] p-5 sm:p-6"
+    >
+      <div className="space-y-5">
+        <img src={image} alt="" className="h-10 w-10 rounded-xl object-cover sm:h-12 sm:w-12" />
+        <div className="space-y-1">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-primary/65">{number}</p>
+          <h3 style={{ color: '#E1E0CC' }} className="text-xl sm:text-2xl">
+            {title}
+          </h3>
+        </div>
+        <ul className="space-y-3">
+          {items.map((item) => (
+            <li key={item} className="flex items-start gap-3">
+              <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <span className="text-sm leading-5 text-gray-400">{item}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <button
+        type="button"
+        className="mt-8 inline-flex items-center gap-2 self-start text-sm text-primary transition-transform hover:translate-x-1"
+      >
+        Learn more
+        <ArrowRight className="-rotate-45" size={16} />
+      </button>
+    </motion.article>
+  )
+}
+
+function LandingPage() {
+  return (
+    <main className="bg-black text-primary">
+      <section className="h-screen bg-black p-4 md:p-6">
+        <div className="relative h-full overflow-hidden rounded-2xl md:rounded-[2rem]">
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 h-full w-full object-cover"
+            src={heroVideoUrl}
+          />
+          <div className="noise-overlay pointer-events-none absolute inset-0 opacity-[0.7] mix-blend-overlay" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/60" />
+
+          <div className="absolute left-1/2 top-0 z-20 -translate-x-1/2">
+            <nav className="rounded-b-2xl bg-black px-4 py-2 md:rounded-b-3xl md:px-8">
+              <ul className="flex items-center gap-3 sm:gap-6 md:gap-12 lg:gap-14">
+                {navItems.map((item) => (
+                  <li key={item}>
+                    <a
+                      href="#"
+                      className="text-[10px] sm:text-xs md:text-sm transition-colors"
+                      style={{ color: 'rgba(225, 224, 204, 0.8)' }}
+                      onMouseEnter={(event) => {
+                        event.currentTarget.style.color = '#E1E0CC'
+                      }}
+                      onMouseLeave={(event) => {
+                        event.currentTarget.style.color = 'rgba(225, 224, 204, 0.8)'
+                      }}
+                    >
+                      {item}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </div>
+
+          <div className="absolute right-4 top-4 z-20 md:right-8 md:top-8">
+            <button
+              type="button"
+              onClick={() => {
+                navigate('/dashboard')
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-[#e1e0cc]/25 bg-black/50 px-4 py-2 text-xs uppercase tracking-[0.22em] text-[#e1e0cc] transition hover:border-[#e1e0cc]/60"
+            >
+              Shared Glasses
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="absolute bottom-0 left-0 right-0 z-10 p-4 sm:p-6 md:p-8 lg:p-10">
+            <div className="grid items-end gap-6 md:grid-cols-12">
+              <div className="md:col-span-8">
+                <WordsPullUp
+                  text="Edith"
+                  showAsterisk
+                  className="text-[26vw] font-medium leading-[0.85] tracking-[-0.045em] sm:text-[24vw] md:text-[22vw] lg:text-[20vw] xl:text-[19vw] 2xl:text-[20vw]"
+                />
+              </div>
+
+              <div className="space-y-5 md:col-span-4 md:pb-6">
+                <motion.p
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.8, delay: 0.5, ease }}
+                  className="max-w-sm text-xs leading-[1.2] text-primary/70 sm:text-sm md:text-base"
+                >
+                  Edith is a worldwide network of visual artists, filmmakers and storytellers
+                  bound not by place, status or labels but by passion and hunger to unlock
+                  potential through our unique perspectives.
+                </motion.p>
+
+                <div className="flex flex-wrap gap-3">
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.8, delay: 0.7, ease }}
+                    className="group inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-medium text-black transition-all hover:gap-3 sm:text-base"
+                  >
+                    Join the lab
+                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black transition-transform group-hover:scale-110 sm:h-10 sm:w-10">
+                      <ArrowRight className="h-4 w-4 text-primary" />
+                    </span>
+                  </motion.button>
+
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.8, delay: 0.8, ease }}
+                    onClick={() => {
+                      navigate('/dashboard')
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#e1e0cc]/20 px-5 py-2.5 text-sm font-medium text-[#e1e0cc] transition hover:border-[#e1e0cc]/50 sm:text-base"
+                  >
+                    Open dashboard
+                    <Glasses className="h-4 w-4" />
+                  </motion.button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="relative min-h-screen overflow-hidden bg-black px-4 py-24 sm:px-6 md:px-8">
+        <div className="bg-noise pointer-events-none absolute inset-0 opacity-[0.15]" />
+        <div className="relative mx-auto max-w-7xl">
+          <div className="mb-12 space-y-3 text-center">
+            <div
+              style={{ color: '#E1E0CC' }}
+              className="text-xl font-normal sm:text-2xl md:text-3xl lg:text-4xl"
+            >
+              <WordsPullUpMultiStyle
+                segments={[{ text: 'Studio-grade workflows for visionary creators.' }]}
+              />
+            </div>
+            <div className="text-xl font-normal text-gray-500 sm:text-2xl md:text-3xl lg:text-4xl">
+              <WordsPullUpMultiStyle
+                segments={[{ text: 'Built for pure vision. Powered by art.', className: 'text-gray-500' }]}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 lg:h-[480px] lg:grid-cols-4 lg:gap-1">
+            <motion.article
+              initial={{ opacity: 0, scale: 0.95, y: 18 }}
+              whileInView={{ opacity: 1, scale: 1, y: 0 }}
+              viewport={{ once: true, margin: '-100px' }}
+              transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+              className="relative min-h-[280px] overflow-hidden rounded-[1.75rem]"
+            >
+              <video
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="absolute inset-0 h-full w-full object-cover"
+                src={featureVideoUrl}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+              <div className="absolute bottom-0 left-0 right-0 p-5 sm:p-6">
+                <p style={{ color: '#E1E0CC' }} className="text-lg sm:text-xl">
+                  Your creative canvas.
+                </p>
+              </div>
+            </motion.article>
+
+            {featureCards.map((card, index) => (
+              <FeatureCard key={card.title} {...card} index={index + 1} />
+            ))}
+          </div>
+        </div>
+      </section>
+    </main>
+  )
+}
+
+function IdentityLayer({
   status,
-  refreshing,
-  onRefresh,
   onDisconnect,
 }: {
   status: GoogleStatus | null
-  refreshing: boolean
-  onRefresh: () => void
   onDisconnect: () => Promise<void>
 }) {
   const connectedUser = status?.active_user
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 24 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.8, ease }}
-      className="glass-panel relative overflow-hidden rounded-[2rem] border border-white/10 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.45)] md:p-8"
-    >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(225,224,204,0.16),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(111,78,55,0.22),transparent_30%)]" />
-      <div className="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
-        <div className="max-w-3xl space-y-4">
-          <p className="text-[0.7rem] uppercase tracking-[0.35em] text-[#c9c6a6]/65">
-            Shared Glasses Control Surface
-          </p>
-          <h1 className="max-w-2xl text-5xl leading-none tracking-[-0.05em] text-[#f4f1d8] md:text-7xl">
-            Edith turns one pair of Meta glasses into a live Google workflow.
-          </h1>
-          <p className="max-w-2xl text-sm leading-6 text-[#d3cfb3]/72 md:text-base">
-            Anyone can use the glasses for conversation, but protected Google actions only
-            unlock after they connect on the site. When a task matters, the glasses ask for a
-            spoken confirmation before they continue.
-          </p>
-        </div>
-
-        <div className="w-full max-w-md rounded-[1.75rem] border border-white/8 bg-black/40 p-5 backdrop-blur-xl">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-full border border-[#d9d3aa]/20 bg-[#d9d3aa]/10">
-                <Glasses className="h-5 w-5 text-[#efe9c6]" />
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.28em] text-[#b9b48d]/60">
-                  Active user
-                </p>
-                <p className="text-lg text-[#f2efd9]">
-                  {connectedUser?.display_name ?? 'No Google account connected'}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-xs uppercase tracking-[0.2em] text-[#d8d1ab] transition hover:border-[#d8d1ab]/40 hover:text-[#f4f1d8] disabled:cursor-wait disabled:opacity-60"
-            >
-              <RefreshCcw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-          </div>
-
-          <div className="space-y-3 rounded-[1.5rem] bg-white/[0.03] p-4">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="h-4 w-4 text-[#efe9c6]" />
-              <p className="text-sm text-[#d9d4bb]">
-                {connectedUser
-                  ? `${connectedUser.email} is currently action-enabled for the shared glasses.`
-                  : 'No one is linked yet, so Gmail, Calendar, and Tasks actions stay locked.'}
-              </p>
-            </div>
-
-            {connectedUser ? (
-              <div className="grid gap-3 pt-2 sm:grid-cols-2">
-                <div>
-                  <p className="text-[0.68rem] uppercase tracking-[0.28em] text-[#b9b48d]/55">
-                    Connected
-                  </p>
-                  <p className="mt-1 text-sm text-[#f2efd9]">
-                    {formatTimestamp(connectedUser.connected_at)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[0.68rem] uppercase tracking-[0.28em] text-[#b9b48d]/55">
-                    Granted scopes
-                  </p>
-                  <p className="mt-1 text-sm text-[#f2efd9]">
-                    {connectedUser.granted_scopes.length}
-                  </p>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-            <a
-              href={getGoogleConnectUrl()}
-              className="group inline-flex flex-1 items-center justify-between rounded-full bg-[#e7e0b1] px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-black transition hover:bg-[#f4edbc]"
-            >
-              Connect Google
-              <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                void onDisconnect()
-              }}
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 px-5 py-3 text-sm uppercase tracking-[0.18em] text-[#e8e2bb] transition hover:border-[#e8e2bb]/40 hover:text-[#f5f1d8]"
-            >
-              <Unplug className="h-4 w-4" />
-              Disconnect
-            </button>
-          </div>
-        </div>
-      </div>
-    </motion.section>
-  )
-}
-
-function HistoryTimeline({ history }: { history: HistoryEvent[] }) {
-  return (
-    <section className="grid gap-5 lg:grid-cols-[1.1fr,0.9fr]">
+    <section className="mx-auto flex min-h-[82vh] w-full max-w-7xl items-center px-4 md:px-8">
       <motion.article
         initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: '-100px' }}
-        transition={{ duration: 0.75, ease }}
-        className="glass-panel rounded-[2rem] border border-white/10 p-6 md:p-7"
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.9, ease }}
+        className="relative w-full py-20"
       >
-        <div className="mb-6 flex items-end justify-between gap-4">
-          <div>
-            <p className="text-[0.7rem] uppercase tracking-[0.35em] text-[#c9c6a6]/65">
-              Action history
-            </p>
-            <h2 className="mt-2 text-3xl tracking-[-0.04em] text-[#f4f1d8]">
-              Every confirmed glasses action, in one trail.
-            </h2>
-          </div>
-          <div className="rounded-full border border-white/10 px-3 py-2 text-xs uppercase tracking-[0.25em] text-[#d0caa7]">
-            {history.length} events
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          {history.length === 0 ? (
-            <div className="rounded-[1.5rem] border border-dashed border-white/10 bg-white/[0.02] p-5 text-sm text-[#c8c39f]">
-              No Google workflow actions have been logged yet. Connect an account and ask the
-              glasses to send an email, create a calendar event, or capture a task.
+        <div className="pointer-events-none absolute left-[18%] top-1/2 h-[24rem] w-[24rem] -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(234,225,177,0.08),rgba(234,225,177,0.02)_36%,transparent_68%)] blur-3xl" />
+        <motion.div
+          animate={{ y: [0, -12, 0], x: [0, 6, 0] }}
+          transition={{ duration: 11, repeat: Infinity, ease: 'easeInOut' }}
+          className="pointer-events-none absolute right-[4%] top-[4%] hidden h-64 w-64 rounded-full bg-[radial-gradient(circle,rgba(244,224,164,0.56),rgba(244,224,164,0.22)_26%,rgba(244,224,164,0.07)_50%,transparent_74%)] opacity-70 blur-3xl md:block"
+        />
+        <div className="relative grid items-center gap-12 lg:grid-cols-[1.05fr,0.95fr]">
+          <div className="flex flex-col items-start">
+            <div className="mb-8 flex flex-wrap items-center gap-5 text-[0.66rem] uppercase tracking-[0.42em] text-[#e4dec1]/72">
+              <button
+                type="button"
+                onClick={() => {
+                  navigate('/')
+                }}
+                className="group inline-flex items-center gap-3 rounded-full border border-white/12 bg-white/[0.05] px-4 py-3 text-[14px] uppercase tracking-[0.24em] text-[#f1ecd0] shadow-[0_8px_30px_rgba(0,0,0,0.25)] backdrop-blur-2xl transition hover:border-[#f1e7bf]/30 hover:bg-white/[0.08]"
+              >
+                <span className="overflow-hidden">
+                  <span className="inline-flex translate-x-0 transition-transform duration-300 ease-out group-hover:-translate-x-1">
+                    <ArrowLeft className="h-4 w-4" />
+                  </span>
+                </span>
+                <span>Back Home</span>
+              </button>
+              <span>Identity Layer</span>
             </div>
-          ) : (
-            history
-              .slice()
-              .reverse()
-              .map((event) => (
-                <div
-                  key={event.id}
-                  className="rounded-[1.4rem] border border-white/8 bg-black/35 p-4"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="h-4 w-4 text-[#efe9c6]" />
-                        <p className="text-sm uppercase tracking-[0.22em] text-[#bdb791]">
-                          {event.intent.replaceAll('_', ' ')}
-                        </p>
-                      </div>
-                      <p className="text-base leading-6 text-[#f2efd9]">{event.summary}</p>
-                    </div>
-                    <div className="text-left sm:text-right">
-                      <p className="text-xs uppercase tracking-[0.24em] text-[#d0caa7]/65">
-                        {event.status}
-                      </p>
-                      <p className="mt-1 text-sm text-[#c6c1a0]">
-                        {formatTimestamp(event.timestamp)}
-                      </p>
-                    </div>
-                  </div>
-                  {event.actor_email ? (
-                    <p className="mt-3 text-xs uppercase tracking-[0.2em] text-[#9d987a]">
-                      {event.actor_email}
+            <motion.h1
+              initial={{ opacity: 0, x: -56 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 1.1, ease: [0.23, 1, 0.32, 1] }}
+              className="max-w-xl text-[4.9rem] leading-[0.9] tracking-[-0.035em] text-[#fcf7df] md:text-[8.35rem]"
+              style={{
+                fontFamily:
+                  '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Times New Roman", serif',
+              }}
+            >
+              Identity.
+            </motion.h1>
+          </div>
+
+          <div className="flex flex-col items-center justify-center lg:items-start lg:pl-10">
+            <div className="w-full max-w-md text-center lg:text-left">
+              <p className="mb-10 text-[0.64rem] uppercase tracking-[0.46em] text-[#e2dab5]/62">
+                Google Link
+              </p>
+              <a
+                href={getGoogleConnectUrl()}
+                className={`identity-button group ${
+                  connectedUser ? 'identity-button-connected' : 'identity-button-idle'
+                }`}
+              >
+                <span>{connectedUser ? 'Connected' : 'Connect Google'}</span>
+                {!connectedUser ? (
+                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4" />
+                )}
+              </a>
+
+              {connectedUser ? (
+                <>
+                  <motion.div
+                    initial={{ opacity: 0, x: 42 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 1, delay: 1, ease: [0.23, 1, 0.32, 1] }}
+                    className="mt-12 flex flex-col items-center gap-3 lg:items-start"
+                  >
+                    <p className="text-[18px] font-semibold uppercase tracking-[0.1em] text-[#f6f1d8] md:text-[20px]">
+                      {connectedUser.display_name}
                     </p>
-                  ) : null}
-                </div>
-              ))
-          )}
+                    <p className="text-[16px] font-normal uppercase tracking-[0.1em] text-[#e3dcc0]">
+                      {connectedUser.email}
+                    </p>
+                  </motion.div>
+
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, x: 42 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 1, delay: 1.15, ease: [0.23, 1, 0.32, 1] }}
+                    onClick={() => {
+                      void onDisconnect()
+                    }}
+                    className="mt-16 inline-flex items-center justify-center rounded-full border border-white/14 px-5 py-3 text-[0.72rem] uppercase tracking-[0.24em] text-[#f0ead0] transition hover:border-[#f0e2b3]/38 hover:bg-[#f1e8c8] hover:text-black"
+                  >
+                    Disconnect
+                  </motion.button>
+                </>
+              ) : (
+                <div className="mt-12 h-px w-16 bg-white/8 lg:ml-0" />
+              )}
+            </div>
+          </div>
         </div>
       </motion.article>
-
-      <motion.aside
-        initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: '-100px' }}
-        transition={{ duration: 0.75, delay: 0.05, ease }}
-        className="space-y-5"
-      >
-        <div className="glass-panel rounded-[2rem] border border-white/10 p-6">
-          <p className="text-[0.7rem] uppercase tracking-[0.35em] text-[#c9c6a6]/65">
-            Confirmation flow
-          </p>
-          <ol className="mt-5 space-y-4 text-sm leading-6 text-[#ddd7b8]">
-            <li>1. Connect your Google account on the site.</li>
-            <li>2. Ask the shared glasses to send mail, create an event, or set a task.</li>
-            <li>3. The glasses ask, “Before I continue, just to confirm, are you &lt;name&gt;?”</li>
-            <li>4. Say `yes` and the action proceeds immediately.</li>
-          </ol>
-        </div>
-
-        {workflowCards.map(({ icon: Icon, title, body }, index) => (
-          <motion.div
-            key={title}
-            initial={{ opacity: 0, x: 18 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.65, delay: index * 0.08, ease }}
-            className="glass-panel rounded-[1.75rem] border border-white/10 p-5"
-          >
-            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.05]">
-              <Icon className="h-5 w-5 text-[#efe9c6]" />
-            </div>
-            <h3 className="text-xl tracking-[-0.03em] text-[#f3efd7]">{title}</h3>
-            <p className="mt-2 text-sm leading-6 text-[#cbc5a2]">{body}</p>
-          </motion.div>
-        ))}
-      </motion.aside>
     </section>
   )
 }
 
-export default function App() {
+function DashboardPage() {
   const [status, setStatus] = useState<GoogleStatus | null>(null)
-  const [history, setHistory] = useState<HistoryEvent[]>([])
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [oauthState, setOauthState] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('google')
+  })
 
   async function loadDashboard() {
     setError(null)
-    const [nextStatus, nextHistory] = await Promise.all([
-      fetchGoogleStatus(),
-      fetchGoogleHistory(),
-    ])
+    const nextStatus = await fetchGoogleStatus()
     setStatus(nextStatus)
-    setHistory(nextHistory.events)
   }
 
   useEffect(() => {
@@ -338,20 +528,17 @@ export default function App() {
     }
   }, [])
 
-  async function handleRefresh() {
-    setRefreshing(true)
-    try {
-      await loadDashboard()
-    } catch (refreshError) {
-      setError(
-        refreshError instanceof Error
-          ? refreshError.message
-          : 'Could not refresh dashboard state.',
-      )
-    } finally {
-      setRefreshing(false)
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search)
+      setOauthState(params.get('google'))
     }
-  }
+
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+    }
+  }, [])
 
   async function handleDisconnect() {
     try {
@@ -379,30 +566,57 @@ export default function App() {
         />
         <div className="bg-noise absolute inset-0 opacity-20" />
         <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 md:px-8">
-          <DashboardHeader
-            status={status}
-            refreshing={refreshing}
-            onRefresh={() => {
-              void handleRefresh()
-            }}
-            onDisconnect={handleDisconnect}
-          />
-
           {loading ? (
-            <div className="glass-panel rounded-[2rem] border border-white/10 p-8 text-sm uppercase tracking-[0.25em] text-[#d0caa7]">
+            <div className="py-6 text-center text-[0.68rem] uppercase tracking-[0.25em] text-[#9f9a79]">
               Loading dashboard state...
             </div>
           ) : null}
 
           {error ? (
-            <div className="glass-panel rounded-[2rem] border border-[#9c4f44]/30 bg-[#1a0807]/80 p-5 text-sm text-[#f0c3ba]">
+            <div className="py-4 text-center text-[0.68rem] uppercase tracking-[0.22em] text-[#c7938b]">
               {error}
             </div>
           ) : null}
 
-          <HistoryTimeline history={history} />
+          {oauthState === 'connected' ? (
+            <div className="py-4 text-center text-[0.68rem] uppercase tracking-[0.24em] text-[#9ec38b]">
+              Google connected
+            </div>
+          ) : null}
+
+          {oauthState === 'error' ? (
+            <div className="py-4 text-center text-[0.68rem] uppercase tracking-[0.24em] text-[#c7938b]">
+              Google connection failed
+            </div>
+          ) : null}
+
+          <IdentityLayer
+            status={status}
+            onDisconnect={handleDisconnect}
+          />
         </div>
       </div>
     </main>
   )
+}
+
+export default function App() {
+  const [path, setPath] = useState(() => window.location.pathname)
+
+  useEffect(() => {
+    const onPopState = () => {
+      setPath(window.location.pathname)
+    }
+
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+    }
+  }, [])
+
+  if (path === '/dashboard') {
+    return <DashboardPage />
+  }
+
+  return <LandingPage />
 }

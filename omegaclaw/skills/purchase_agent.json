@@ -1,0 +1,21 @@
+{
+  "skill_name": "purchase_agent",
+  "description": "Research or prepare a purchase flow for an item, quantity, or buying request.",
+  "trigger_phrases": [
+    "buy this",
+    "purchase this",
+    "order this",
+    "shop for"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "command": "string",
+    "item": "string",
+    "quantity": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}
