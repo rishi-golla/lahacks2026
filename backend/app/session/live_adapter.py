@@ -113,6 +113,12 @@ _SYSTEM_INSTRUCTION = (
     "- To describe the scene: call agent(intent='describe_scene', "
     "image_context='brief text description of what you see').\n"
     "- To search the web: call agent(intent='google_search', query=...).\n\n"
+    "Before calling agent, always speak a brief acknowledgment first so the user knows you "
+    "heard them and work is in progress — for example: "
+    "\"Got it, looking that up,\" then agent for search; "
+    "\"One sec, checking who that is,\" for identify_person; "
+    "\"Let me describe what I'm seeing,\" for describe_scene. "
+    "Never call agent silently; the backend may take several seconds.\n\n"
     "For general conversation or questions you can answer directly, do not call agent. "
     "Keep spoken responses short and natural — the user cannot see a screen."
 )

@@ -41,6 +41,7 @@ Agentverse is the specialist-skill layer. The local `contextlens-agent/` service
 |-- contextlens-agent/         # ContextLens FastAPI + uAgents skill service
 |-- docs/
 |   `-- gemini-api/           # reference material
+|-- PeTTa/repos/OmegaClaw-Core # vendored OmegaClaw-Core (Docker image build + scripts/omegaclaw)
 |-- PRD.md                    # product + architecture source of truth
 `-- README.md                 # this overview
 ```
@@ -81,6 +82,40 @@ In Xcode:
 
 For a physical iPhone, enter a `wss://.../session` ngrok URL in the app's backend URL field.
 
+## Starting everything locally
+
+Typical order: **backend** (with the bridge enabled if you use Docker OmegaClaw below), **OmegaClaw container** (optional), then **iOS** pointed at `ws://127.0.0.1:8000/session` (or your tunnel URL).
+
+### Backend
+
+Same as [Quick start → Backend](#backend). For the Docker OmegaClaw HTTP bridge, set `OMEGACLAW_BRIDGE_ENABLED=1` in `backend/.env` (see commented lines in `backend/.env.example`) and keep the API on port **8000** so the container’s default `http://host.docker.internal:8000` base URL works on macOS.
+
+### OmegaClaw (Docker)
+
+From the vendored core tree (paths match [`docs/OMEGACLAW_DOCKER_WORKFLOW.md`](docs/OMEGACLAW_DOCKER_WORKFLOW.md)):
+
+```bash
+cd PeTTa/repos/OmegaClaw-Core
+docker build -t my-omegaclaw:dev .
+./scripts/omegaclaw my-omegaclaw:dev
+```
+
+The script prompts for a channel, LLM provider, and API key. Choose **option 3** (LA Hacks HTTP bridge) so the container long-polls this repo’s backend at `/internal/omegaclaw/next`. Start the backend with the bridge enabled before answering those prompts.
+
+**Clean up** (removes the container and its named memory volume):
+
+```bash
+docker stop omegaclaw
+docker rm -f omegaclaw
+docker volume rm omegaclaw-memory
+```
+
+The wrapper already runs `docker rm -f omegaclaw` before starting a new container; use the full cleanup when you want to drop persisted MeTTa memory.
+
+### iOS
+
+Same as [Quick start → iOS](#ios). See [`apps/ios/README.md`](apps/ios/README.md) for signing and scheme details.
+
 ## Track-by-track setup
 
 ### iOS track setup
@@ -101,8 +136,7 @@ For a physical iPhone, enter a `wss://.../session` ngrok URL in the app's backen
 ### OmegaClaw track setup
 
 - Read [`PRD.md`](PRD.md) first.
-- Use the PRD's OmegaClaw references to design the channel adapter and remote-skill wiring.
-- Expect this work to happen in a separate OmegaClaw clone or integration workspace until the adapter code is brought into this repo.
+- For a runnable Docker sidecar against this backend, follow [Starting everything locally → OmegaClaw (Docker)](#omegaclaw-docker) and [`docs/OMEGACLAW_DOCKER_WORKFLOW.md`](docs/OMEGACLAW_DOCKER_WORKFLOW.md) / [`docs/omegaclaw_bridge_runbook.md`](docs/omegaclaw_bridge_runbook.md).
 
 Current honesty: OmegaClaw adapter/runtime code is checked in, but Gemini is not yet wired to call it as an `agent` tool.
 
