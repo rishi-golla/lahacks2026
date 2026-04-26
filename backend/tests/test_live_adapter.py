@@ -191,6 +191,47 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fn_resp.name, "agent")
         self.assertIn("Alice is a software engineer", fn_resp.response["output"])
 
+    async def test_agent_tool_call_uses_backend_channel_submit_when_available(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        adapter._backend_channel = AsyncMock()
+        adapter._backend_channel.submit = AsyncMock(
+            return_value={
+                "summary": "Alice is a software engineer at Acme.",
+                "confidence": "high",
+                "source": "agentverse:identify_person",
+            }
+        )
+        request_session = SessionContext(session_id="session-backend-channel")
+        await adapter.open(request_session, _hello_payload(), sender)
+
+        response = _live_response_with_tool_call(
+            "call-backend-channel",
+            "agent",
+            {
+                "intent": "identify_person",
+                "name": "Alice",
+                "organization": "Acme",
+                "title": "Engineer",
+            },
+        )
+        await adapter._handle_server_message(response, sender, request_session)
+
+        adapter._backend_channel.submit.assert_awaited_once()
+        task = adapter._backend_channel.submit.await_args.args[0]
+        self.assertEqual(task.session_id, "session-backend-channel")
+        self.assertEqual(task.turn_id, "call-backend-channel")
+        self.assertEqual(task.intent, "identify_person")
+        self.assertEqual(task.tool_call_id, "call-backend-channel")
+        self.assertEqual(
+            task.args,
+            {"name": "Alice", "organization": "Acme", "title": "Engineer"},
+        )
+        self.assertEqual(len(session.tool_response_calls), 1)
+        output = session.tool_response_calls[0][0].response["output"]
+        self.assertIn("Alice is a software engineer", output)
+
     async def test_agent_tool_call_sends_started_and_result_tool_events_to_ios(self) -> None:
         session = _FakeGeminiSession()
         sender = _FakeSender()
