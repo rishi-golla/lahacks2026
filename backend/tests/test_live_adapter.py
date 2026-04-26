@@ -5,6 +5,7 @@ import os
 from types import SimpleNamespace
 from typing import Any
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from app.session.coordinator import SessionContext
 from app.session.live_adapter import GeminiLiveAdapter
@@ -159,6 +160,116 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sender.messages, [])
 
+    # ------------------------------------------------------------------
+    # Agent tool call tests
+    # ------------------------------------------------------------------
+
+    async def test_agent_tool_call_dispatches_to_omegaclaw_and_sends_function_response(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+        fut.set_result({"result": {"summary": "Alice is a software engineer at Acme."}})
+
+        mock_loop = AsyncMock()
+        mock_loop.run_once = AsyncMock(return_value=True)
+        adapter._agent_loop = mock_loop
+
+        with patch("app.session.live_adapter._omegaclaw_enqueue", return_value=("req-1", fut)), \
+             patch("app.session.live_adapter._omegaclaw_available", True):
+            response = _live_response_with_tool_call(
+                "call-1", "agent",
+                {"intent": "who is this", "name": "Alice", "organization": "Acme", "title": "Engineer"},
+            )
+            await adapter._handle_server_message(response, sender)
+
+        self.assertEqual(len(session.tool_response_calls), 1)
+        fn_resp = session.tool_response_calls[0][0]
+        self.assertEqual(fn_resp.id, "call-1")
+        self.assertEqual(fn_resp.name, "agent")
+        self.assertIn("Alice is a software engineer", fn_resp.response["output"])
+
+    async def test_agent_tool_call_sends_started_and_result_tool_events_to_ios(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+        fut.set_result({"result": {"summary": "Bob is a product manager."}})
+
+        mock_loop = AsyncMock()
+        mock_loop.run_once = AsyncMock(return_value=True)
+        adapter._agent_loop = mock_loop
+
+        with patch("app.session.live_adapter._omegaclaw_enqueue", return_value=("req-2", fut)), \
+             patch("app.session.live_adapter._omegaclaw_available", True):
+            response = _live_response_with_tool_call(
+                "call-2", "agent", {"intent": "identify_person", "name": "Bob"},
+            )
+            await adapter._handle_server_message(response, sender)
+
+        tool_events = [m for m in sender.messages if m.get("type") == "tool_event"]
+        self.assertEqual(len(tool_events), 2)
+        self.assertEqual(tool_events[0]["phase"], "started")
+        self.assertEqual(tool_events[0]["tool_call_id"], "call-2")
+        self.assertEqual(tool_events[1]["phase"], "result")
+        self.assertEqual(tool_events[1]["result_summary"], "Bob is a product manager.")
+
+    async def test_agent_tool_call_timeout_sends_fallback_function_response(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        # Future that never resolves — will trigger wait_for timeout
+        fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+
+        mock_loop = AsyncMock()
+        mock_loop.run_once = AsyncMock(return_value=True)
+        adapter._agent_loop = mock_loop
+
+        with patch("app.session.live_adapter._omegaclaw_enqueue", return_value=("req-3", fut)), \
+             patch("app.session.live_adapter._omegaclaw_available", True), \
+             patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            response = _live_response_with_tool_call("call-3", "agent", {"intent": "who is this"})
+            await adapter._handle_server_message(response, sender)
+
+        self.assertEqual(len(session.tool_response_calls), 1)
+        output = session.tool_response_calls[0][0].response["output"]
+        self.assertIn("timed out", output.lower())
+
+    async def test_agent_tool_call_omegaclaw_unavailable_sends_fallback_function_response(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        with patch("app.session.live_adapter._omegaclaw_available", False):
+            adapter._agent_loop = None
+            response = _live_response_with_tool_call("call-4", "agent", {"intent": "who is this"})
+            await adapter._handle_server_message(response, sender)
+
+        self.assertEqual(len(session.tool_response_calls), 1)
+        output = session.tool_response_calls[0][0].response["output"]
+        self.assertIn("not available", output.lower())
+
+    async def test_unknown_function_call_sends_error_function_response(self) -> None:
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        response = _live_response_with_tool_call("call-5", "unsupported_tool", {"foo": "bar"})
+        await adapter._handle_server_message(response, sender)
+
+        self.assertEqual(len(session.tool_response_calls), 1)
+        fn_resp = session.tool_response_calls[0][0]
+        self.assertEqual(fn_resp.name, "unsupported_tool")
+        self.assertIn("Unknown function", fn_resp.response["output"])
+
     async def test_server_messages_are_emitted_through_sender_contract(self) -> None:
         session = _FakeGeminiSession(
             responses=[
@@ -276,6 +387,7 @@ class _FakeGeminiSession:
     def __init__(self, *, responses: list[object] | None = None) -> None:
         self.client_content_calls: list[tuple[dict[str, Any], bool]] = []
         self.realtime_input_calls: list[dict[str, Any]] = []
+        self.tool_response_calls: list[list[Any]] = []
         self._responses = list(responses or [])
 
     async def send_client_content(self, *, turns, turn_complete: bool = True) -> None:
@@ -283,6 +395,9 @@ class _FakeGeminiSession:
 
     async def send_realtime_input(self, **kwargs) -> None:
         self.realtime_input_calls.append(kwargs)
+
+    async def send_tool_response(self, *, function_responses: list[Any]) -> None:
+        self.tool_response_calls.append(function_responses)
 
     async def receive(self):
         if not self._responses:
@@ -385,6 +500,16 @@ def _model_turn(*parts) -> SimpleNamespace:
 
 def _audio_part(data: bytes, mime_type: str) -> SimpleNamespace:
     return SimpleNamespace(text=None, inline_data=SimpleNamespace(data=data, mime_type=mime_type))
+
+
+def _live_response_with_tool_call(call_id: str, name: str, args: dict[str, Any]) -> SimpleNamespace:
+    fc = SimpleNamespace(id=call_id, name=name, args=args)
+    return SimpleNamespace(
+        session_resumption_update=None,
+        server_content=None,
+        tool_call=SimpleNamespace(function_calls=[fc]),
+        text=None,
+    )
 
 
 if __name__ == "__main__":
