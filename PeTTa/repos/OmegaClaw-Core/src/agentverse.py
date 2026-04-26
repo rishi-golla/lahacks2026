@@ -25,6 +25,12 @@ MAIL_SENDING_AGENT_ADDRESS = os.environ.get(
     "agent1qw6d5mxr6dsw859yxuuk8zg8wgg9j8x9ss230upu6z72pv60hvyyuuwhyaz",
 ).strip()
 
+# LA Hacks reminder uAgent — override with REMINDER_AGENT_ADDRESS if needed.
+REMINDER_AGENT_ADDRESS = os.environ.get(
+    "REMINDER_AGENT_ADDRESS",
+    "agent1qv37fkpxaeu538vxp2axmafehh7krvganh0ygqdnrnck35xpjdatwt6rult",
+).strip()
+
 
 class WebSearchRequest(Model):
     query: str
@@ -36,6 +42,12 @@ class TechAnalysisRequest(Model):
 
 class MailSendingRequest(Model):
     """Must match `MailSendingRequest` in `agents/mail_sending_agent.py`."""
+
+    prompt: str
+
+
+class ReminderRequest(Model):
+    """Must match `ReminderRequest` in `agents/reminder_agent.py`."""
 
     prompt: str
 
@@ -88,11 +100,9 @@ async def _ask_agent_async_only(
 ) -> str:
     """Call a uAgent with **async** delivery only (``sync=False``).
 
-    The mail pipeline does not need a synchronous *reply* Envelope in-band. Skipping
-    ``send_sync_message`` avoids ``uagents`` reading the Agentverse **sync** response
-    with ``Envelope.model_validate`` — that path often gets HTTP 200 and body ``{}``,
-    which triggers Pydantic errors and ``[dispenser]`` ERROR noise even though the
-    outbound request is fine.
+    Use for skills that do not need a synchronous *reply* Envelope. Skipping
+    ``send_sync_message`` avoids ``uagents`` parsing an invalid Agentverse **sync**
+    response (HTTP 200 + empty body), which spams ``[dispenser]`` and Pydantic errors.
     """
     out: Any = await send_message(
         destination=destination,
@@ -102,8 +112,8 @@ async def _ask_agent_async_only(
     )
     if isinstance(out, MsgStatus) and out.status == DeliveryStatus.DELIVERED:
         return (
-            "Message delivered to the mail uAgent. "
-            "The agent will process the request; there is no in-band reply in async mode."
+            "Message delivered. The uAgent will process the request; "
+            "there is no in-band reply in async mode."
         )
     return str(out)
 
@@ -170,6 +180,16 @@ def mail_sending_agent(prompt: str, timeout: int = 120) -> str:
         request = MailSendingRequest(prompt=prompt)
         return asyncio.run(
             _ask_agent_async_only(MAIL_SENDING_AGENT_ADDRESS, request, int(timeout))
+        )
+    except Exception as e:
+        return f"error: {e}"
+
+
+def reminder_agent(prompt: str, timeout: int = 120) -> str:
+    try:
+        request = ReminderRequest(prompt=prompt)
+        return asyncio.run(
+            _ask_agent_async_only(REMINDER_AGENT_ADDRESS, request, int(timeout))
         )
     except Exception as e:
         return f"error: {e}"
