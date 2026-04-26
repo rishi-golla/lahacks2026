@@ -265,11 +265,13 @@ final class DATGlassesSession: GlassesSession {
         }
     }
 
-    /// `String(describing:)` on Meta stream errors often prints only `internalError`; include NSError details.
+    /// Include `String(reflecting:)` so enum cases (e.g. `deviceNotConnected(id)`) appear; add NSError for codes.
     private static func describeStreamError(_ error: Error) -> String {
         let ns = error as NSError
         let typeName = String(describing: Swift.type(of: error))
-        var parts: [String] = [typeName]
+        // Full case + associated values, unlike `localizedDescription` / NSError code alone.
+        let reflected = String(reflecting: error)
+        var parts: [String] = [reflected, typeName]
         let desc = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         if !desc.isEmpty {
             parts.append(desc)

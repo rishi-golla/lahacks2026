@@ -218,7 +218,7 @@ final class SessionCoordinator: ObservableObject {
             appendDebug("Session token refreshed")
         case .audioChunk(let chunk):
             if let data = Data(base64Encoded: chunk.pcmBase64) {
-                appendDebug("Received audio chunk: \(data.count) bytes @ \(chunk.sampleRate)Hz")
+                // appendDebug("Received audio chunk: \(data.count) bytes @ \(chunk.sampleRate)Hz")
                 await audioPipeline.player.enqueue(pcm: data, sampleRate: chunk.sampleRate, turnID: chunk.turnID)
             } else {
                 appendDebug("Received invalid audio chunk")
