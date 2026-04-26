@@ -17,5 +17,5 @@
     "summary": "string",
     "confidence": "string"
   },
-  "timeout_ms": 5000
+  "timeout_ms": 30000
 }

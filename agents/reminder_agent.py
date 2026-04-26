@@ -183,14 +183,26 @@ async def handle_reminder_request(ctx: Context, sender: str, msg: ReminderReques
     try:
         payload = extract_reminder_request(msg.prompt)
         details = payload.get("details", "").strip()
+        datetime_str = payload.get("datetime", "").strip()
         if not details:
             await ctx.send(sender, ErrorMessage(error="Reminder details are required."))
             return
 
+        # Mirror chat path: same scheduling, so Omegaclaw/structured send actually fires reminders.
+        reminder_time = parse_datetime(datetime_str) if datetime_str else None
+        if reminder_time:
+            asyncio.create_task(_schedule_reminder(ctx, sender, reminder_time, details))
+            out_dt = reminder_time.strftime("%Y-%m-%d %H:%M")
+        else:
+            asyncio.create_task(
+                _schedule_reminder(ctx, sender, datetime.now(UTC), details)
+            )
+            out_dt = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+
         await ctx.send(
             sender,
             ReminderResponse(
-                datetime=payload.get("datetime", ""),
+                datetime=out_dt,
                 details=details,
                 status="Reminder set successfully.",
             ),
