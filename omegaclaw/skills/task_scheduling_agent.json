@@ -1,0 +1,21 @@
+{
+  "skill_name": "task_scheduling_agent",
+  "description": "Schedule a task, meeting, or event with structured timing and planning details.",
+  "trigger_phrases": [
+    "schedule this",
+    "plan a meeting",
+    "add this event",
+    "create a task"
+  ],
+  "agent_address": "agent1q_FILL_IN_AFTER_AGENTVERSE_REGISTRATION",
+  "input_schema": {
+    "command": "string",
+    "datetime": "string",
+    "details": "string"
+  },
+  "output_schema": {
+    "summary": "string",
+    "confidence": "string"
+  },
+  "timeout_ms": 5000
+}

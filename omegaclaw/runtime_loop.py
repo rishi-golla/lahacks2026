@@ -19,7 +19,13 @@ class OmegaClawAgentLoop:
         "describe_scene",
         "google_search",
         "google_calendar",
+        "google_tasks",
         "gmail",
+        "people_search_agent",
+        "mail_sending_agent",
+        "task_scheduling_agent",
+        "reminder_agent",
+        "purchase_agent",
     }
 
     async def run_once(self) -> bool:
@@ -83,8 +89,28 @@ class OmegaClawAgentLoop:
             return "describe_scene"
         if any(phrase in lowered for phrase in ("google", "search for", "look up")):
             return "google_search"
+        if any(
+            phrase in lowered
+            for phrase in (
+                "who should i contact",
+                "find a person",
+                "find this person",
+                "people search",
+                "look up this person",
+            )
+        ):
+            return "people_search_agent"
         if any(phrase in lowered for phrase in ("calendar", "meeting", "schedule", "event")):
-            return "google_calendar"
+            return "task_scheduling_agent"
+        if any(phrase in lowered for phrase in ("task", "todo", "to-do", "remind me", "reminder")):
+            if "remind" in lowered or "reminder" in lowered:
+                return "reminder_agent"
+            return "task_scheduling_agent"
         if any(phrase in lowered for phrase in ("email", "gmail", "send mail", "draft email")):
-            return "gmail"
+            return "mail_sending_agent"
+        if any(
+            phrase in lowered
+            for phrase in ("buy", "purchase", "order this", "shop for", "check out")
+        ):
+            return "purchase_agent"
         return "unknown"

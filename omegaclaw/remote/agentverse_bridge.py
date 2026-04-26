@@ -97,6 +97,38 @@ async def invoke_gmail(command: str, recipient: str, subject: str, body: str) ->
     )
 
 
+async def invoke_people_search_agent(query: str) -> dict:
+    return await invoke_remote_skill("people_search_agent", {"query": query})
+
+
+async def invoke_mail_sending_agent(command: str, recipient: str, subject: str, body: str) -> dict:
+    return await invoke_remote_skill(
+        "mail_sending_agent",
+        {"command": command, "recipient": recipient, "subject": subject, "body": body},
+    )
+
+
+async def invoke_task_scheduling_agent(command: str, datetime: str, details: str) -> dict:
+    return await invoke_remote_skill(
+        "task_scheduling_agent",
+        {"command": command, "datetime": datetime, "details": details},
+    )
+
+
+async def invoke_reminder_agent(command: str, datetime: str, details: str) -> dict:
+    return await invoke_remote_skill(
+        "reminder_agent",
+        {"command": command, "datetime": datetime, "details": details},
+    )
+
+
+async def invoke_purchase_agent(command: str, item: str, quantity: str) -> dict:
+    return await invoke_remote_skill(
+        "purchase_agent",
+        {"command": command, "item": item, "quantity": quantity},
+    )
+
+
 def _skill_timeout_seconds(cfg: dict) -> float:
     timeout_ms = cfg.get("timeout_ms")
     if isinstance(timeout_ms, int) and timeout_ms > 0:
@@ -154,4 +186,14 @@ def _fallback_response(skill_name: str, error: str) -> dict:
         return {"summary": "I could not access Google Calendar right now.", "confidence": "low", "source": "fallback", "error": error}
     if skill_name == "gmail":
         return {"summary": "I could not access Gmail right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "people_search_agent":
+        return {"summary": "I could not run the people search agent right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "mail_sending_agent":
+        return {"summary": "I could not run the mail sending agent right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "task_scheduling_agent":
+        return {"summary": "I could not run the task scheduling agent right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "reminder_agent":
+        return {"summary": "I could not run the reminder agent right now.", "confidence": "low", "source": "fallback", "error": error}
+    if skill_name == "purchase_agent":
+        return {"summary": "I could not run the purchase agent right now.", "confidence": "low", "source": "fallback", "error": error}
     return {"description": "I could not describe the scene right now.", "confidence": "low", "source": "fallback", "error": error}

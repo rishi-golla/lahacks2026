@@ -142,11 +142,21 @@ class RemoteBridgeTests(unittest.TestCase):
                 await bridge.invoke_google_search("latest lahacks updates")
                 await bridge.invoke_google_calendar("create", "tomorrow 3pm", "team sync")
                 await bridge.invoke_gmail("draft", "a@example.com", "Hello", "Body")
+                await bridge.invoke_people_search_agent("Ada Lovelace robotics")
+                await bridge.invoke_mail_sending_agent("send", "b@example.com", "Hi", "Body")
+                await bridge.invoke_task_scheduling_agent("schedule", "next friday", "design review")
+                await bridge.invoke_reminder_agent("remind", "tomorrow 9am", "take meds")
+                await bridge.invoke_purchase_agent("buy", "Sony WH-1000XM6", "2")
 
                 expected = [
                     (("google_search", {"query": "latest lahacks updates"}),),
                     (("google_calendar", {"command": "create", "datetime": "tomorrow 3pm", "details": "team sync"}),),
                     (("gmail", {"command": "draft", "recipient": "a@example.com", "subject": "Hello", "body": "Body"}),),
+                    (("people_search_agent", {"query": "Ada Lovelace robotics"}),),
+                    (("mail_sending_agent", {"command": "send", "recipient": "b@example.com", "subject": "Hi", "body": "Body"}),),
+                    (("task_scheduling_agent", {"command": "schedule", "datetime": "next friday", "details": "design review"}),),
+                    (("reminder_agent", {"command": "remind", "datetime": "tomorrow 9am", "details": "take meds"}),),
+                    (("purchase_agent", {"command": "buy", "item": "Sony WH-1000XM6", "quantity": "2"}),),
                 ]
                 actual = [call.args for call in mocked.await_args_list]
                 self.assertEqual(actual, [item[0] for item in expected])
@@ -157,10 +167,16 @@ class RemoteBridgeTests(unittest.TestCase):
         google = bridge._fallback_response("google_search", "timeout")  # noqa: SLF001
         calendar = bridge._fallback_response("google_calendar", "timeout")  # noqa: SLF001
         gmail = bridge._fallback_response("gmail", "timeout")  # noqa: SLF001
+        purchase = bridge._fallback_response("purchase_agent", "timeout")  # noqa: SLF001
+        people = bridge._fallback_response("people_search_agent", "timeout")  # noqa: SLF001
+        reminder = bridge._fallback_response("reminder_agent", "timeout")  # noqa: SLF001
 
         self.assertIn("Google search", google["summary"])
         self.assertIn("Google Calendar", calendar["summary"])
         self.assertIn("Gmail", gmail["summary"])
+        self.assertIn("purchase", purchase["summary"].lower())
+        self.assertIn("people", people["summary"].lower())
+        self.assertIn("reminder", reminder["summary"].lower())
         self.assertEqual(gmail["confidence"], "low")
 
     def test_invoke_remote_skill_uses_skill_timeout_override(self) -> None:

@@ -1,6 +1,20 @@
 import { motion, useInView } from 'framer-motion'
-import { ArrowRight, Check } from 'lucide-react'
-import { useRef } from 'react'
+import {
+  ArrowRight,
+  ArrowLeft,
+  Check,
+  Glasses,
+  ShieldCheck,
+} from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+
+import heroImage from './assets/hero.png'
+import {
+  disconnectGoogle,
+  fetchGoogleStatus,
+  getGoogleConnectUrl,
+  type GoogleStatus,
+} from './lib/api'
 
 const heroVideoUrl =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260405_170732_8a9ccda6-5cff-4628-b164-059c500a2b41.mp4'
@@ -71,6 +85,11 @@ type FeatureCardProps = {
   image: string
   items: readonly string[]
   index: number
+}
+
+function navigate(path: string) {
+  window.history.pushState({}, '', path)
+  window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
 function WordsPullUp({ text, className, showAsterisk = false }: WordsPullUpProps) {
@@ -174,7 +193,7 @@ function FeatureCard({ number, title, image, items, index }: FeatureCardProps) {
   )
 }
 
-export default function App() {
+function LandingPage() {
   return (
     <main className="bg-black text-primary">
       <section className="h-screen bg-black p-4 md:p-6">
@@ -214,6 +233,19 @@ export default function App() {
             </nav>
           </div>
 
+          <div className="absolute right-4 top-4 z-20 md:right-8 md:top-8">
+            <button
+              type="button"
+              onClick={() => {
+                navigate('/dashboard')
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-[#e1e0cc]/25 bg-black/50 px-4 py-2 text-xs uppercase tracking-[0.22em] text-[#e1e0cc] transition hover:border-[#e1e0cc]/60"
+            >
+              Shared Glasses
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
           <div className="absolute bottom-0 left-0 right-0 z-10 p-4 sm:p-6 md:p-8 lg:p-10">
             <div className="grid items-end gap-6 md:grid-cols-12">
               <div className="md:col-span-8">
@@ -237,19 +269,36 @@ export default function App() {
                   potential through our unique perspectives.
                 </motion.p>
 
-                <motion.button
-                  type="button"
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.8, delay: 0.7, ease }}
-                  className="group inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-medium text-black transition-all hover:gap-3 sm:text-base"
-                >
-                  Join the lab
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black transition-transform group-hover:scale-110 sm:h-10 sm:w-10">
-                    <ArrowRight className="h-4 w-4 text-primary" />
-                  </span>
-                </motion.button>
+                <div className="flex flex-wrap gap-3">
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.8, delay: 0.7, ease }}
+                    className="group inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-medium text-black transition-all hover:gap-3 sm:text-base"
+                  >
+                    Join the lab
+                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black transition-transform group-hover:scale-110 sm:h-10 sm:w-10">
+                      <ArrowRight className="h-4 w-4 text-primary" />
+                    </span>
+                  </motion.button>
+
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.8, delay: 0.8, ease }}
+                    onClick={() => {
+                      navigate('/dashboard')
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#e1e0cc]/20 px-5 py-2.5 text-sm font-medium text-[#e1e0cc] transition hover:border-[#e1e0cc]/50 sm:text-base"
+                  >
+                    Open dashboard
+                    <Glasses className="h-4 w-4" />
+                  </motion.button>
+                </div>
               </div>
             </div>
           </div>
@@ -307,4 +356,267 @@ export default function App() {
       </section>
     </main>
   )
+}
+
+function IdentityLayer({
+  status,
+  onDisconnect,
+}: {
+  status: GoogleStatus | null
+  onDisconnect: () => Promise<void>
+}) {
+  const connectedUser = status?.active_user
+
+  return (
+    <section className="mx-auto flex min-h-[82vh] w-full max-w-7xl items-center px-4 md:px-8">
+      <motion.article
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.9, ease }}
+        className="relative w-full py-20"
+      >
+        <div className="pointer-events-none absolute left-[18%] top-1/2 h-[24rem] w-[24rem] -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(234,225,177,0.08),rgba(234,225,177,0.02)_36%,transparent_68%)] blur-3xl" />
+        <motion.div
+          animate={{ y: [0, -12, 0], x: [0, 6, 0] }}
+          transition={{ duration: 11, repeat: Infinity, ease: 'easeInOut' }}
+          className="pointer-events-none absolute right-[4%] top-[4%] hidden h-64 w-64 rounded-full bg-[radial-gradient(circle,rgba(244,224,164,0.56),rgba(244,224,164,0.22)_26%,rgba(244,224,164,0.07)_50%,transparent_74%)] opacity-70 blur-3xl md:block"
+        />
+        <div className="relative grid items-center gap-12 lg:grid-cols-[1.05fr,0.95fr]">
+          <div className="flex flex-col items-start">
+            <div className="mb-8 flex flex-wrap items-center gap-5 text-[0.66rem] uppercase tracking-[0.42em] text-[#e4dec1]/72">
+              <button
+                type="button"
+                onClick={() => {
+                  navigate('/')
+                }}
+                className="group inline-flex items-center gap-3 rounded-full border border-white/12 bg-white/[0.05] px-4 py-3 text-[14px] uppercase tracking-[0.24em] text-[#f1ecd0] shadow-[0_8px_30px_rgba(0,0,0,0.25)] backdrop-blur-2xl transition hover:border-[#f1e7bf]/30 hover:bg-white/[0.08]"
+              >
+                <span className="overflow-hidden">
+                  <span className="inline-flex translate-x-0 transition-transform duration-300 ease-out group-hover:-translate-x-1">
+                    <ArrowLeft className="h-4 w-4" />
+                  </span>
+                </span>
+                <span>Back Home</span>
+              </button>
+              <span>Identity Layer</span>
+            </div>
+            <motion.h1
+              initial={{ opacity: 0, x: -56 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 1.1, ease: [0.23, 1, 0.32, 1] }}
+              className="max-w-xl text-[4.9rem] leading-[0.9] tracking-[-0.035em] text-[#fcf7df] md:text-[8.35rem]"
+              style={{
+                fontFamily:
+                  '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Times New Roman", serif',
+              }}
+            >
+              Identity.
+            </motion.h1>
+          </div>
+
+          <div className="flex flex-col items-center justify-center lg:items-start lg:pl-10">
+            <div className="w-full max-w-md text-center lg:text-left">
+              <p className="mb-10 text-[0.64rem] uppercase tracking-[0.46em] text-[#e2dab5]/62">
+                Google Link
+              </p>
+              <a
+                href={getGoogleConnectUrl()}
+                className={`identity-button group ${
+                  connectedUser ? 'identity-button-connected' : 'identity-button-idle'
+                }`}
+              >
+                <span>{connectedUser ? 'Connected' : 'Connect Google'}</span>
+                {!connectedUser ? (
+                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4" />
+                )}
+              </a>
+
+              {connectedUser ? (
+                <>
+                  <motion.div
+                    initial={{ opacity: 0, x: 42 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 1, delay: 1, ease: [0.23, 1, 0.32, 1] }}
+                    className="mt-12 flex flex-col items-center gap-3 lg:items-start"
+                  >
+                    <p className="text-[18px] font-semibold uppercase tracking-[0.1em] text-[#f6f1d8] md:text-[20px]">
+                      {connectedUser.display_name}
+                    </p>
+                    <p className="text-[16px] font-normal uppercase tracking-[0.1em] text-[#e3dcc0]">
+                      {connectedUser.email}
+                    </p>
+                  </motion.div>
+
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, x: 42 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 1, delay: 1.15, ease: [0.23, 1, 0.32, 1] }}
+                    onClick={() => {
+                      void onDisconnect()
+                    }}
+                    className="mt-16 inline-flex items-center justify-center rounded-full border border-white/14 px-5 py-3 text-[0.72rem] uppercase tracking-[0.24em] text-[#f0ead0] transition hover:border-[#f0e2b3]/38 hover:bg-[#f1e8c8] hover:text-black"
+                  >
+                    Disconnect
+                  </motion.button>
+                </>
+              ) : (
+                <div className="mt-12 h-px w-16 bg-white/8 lg:ml-0" />
+              )}
+            </div>
+          </div>
+        </div>
+      </motion.article>
+    </section>
+  )
+}
+
+function DashboardPage() {
+  const [status, setStatus] = useState<GoogleStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [oauthState, setOauthState] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('google')
+  })
+
+  async function loadDashboard() {
+    setError(null)
+    const nextStatus = await fetchGoogleStatus()
+    setStatus(nextStatus)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      try {
+        await loadDashboard()
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'Could not reach the backend dashboard.',
+          )
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void load()
+    const interval = window.setInterval(() => {
+      void loadDashboard().catch((refreshError) => {
+        if (!cancelled) {
+          setError(
+            refreshError instanceof Error
+              ? refreshError.message
+              : 'Could not refresh dashboard state.',
+          )
+        }
+      })
+    }, 15000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search)
+      setOauthState(params.get('google'))
+    }
+
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+    }
+  }, [])
+
+  async function handleDisconnect() {
+    try {
+      await disconnectGoogle()
+      await loadDashboard()
+    } catch (disconnectError) {
+      setError(
+        disconnectError instanceof Error
+          ? disconnectError.message
+          : 'Could not disconnect the active Google account.',
+      )
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-[#050505] text-[#e7e3ca]">
+      <div className="relative isolate overflow-hidden">
+        <div
+          className="absolute inset-0 opacity-30"
+          style={{
+            backgroundImage: `linear-gradient(180deg, rgba(5, 5, 5, 0.2), rgba(5, 5, 5, 0.95)), url(${heroImage})`,
+            backgroundPosition: 'center',
+            backgroundSize: 'cover',
+          }}
+        />
+        <div className="bg-noise absolute inset-0 opacity-20" />
+        <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 md:px-8">
+          {loading ? (
+            <div className="py-6 text-center text-[0.68rem] uppercase tracking-[0.25em] text-[#9f9a79]">
+              Loading dashboard state...
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="py-4 text-center text-[0.68rem] uppercase tracking-[0.22em] text-[#c7938b]">
+              {error}
+            </div>
+          ) : null}
+
+          {oauthState === 'connected' ? (
+            <div className="py-4 text-center text-[0.68rem] uppercase tracking-[0.24em] text-[#9ec38b]">
+              Google connected
+            </div>
+          ) : null}
+
+          {oauthState === 'error' ? (
+            <div className="py-4 text-center text-[0.68rem] uppercase tracking-[0.24em] text-[#c7938b]">
+              Google connection failed
+            </div>
+          ) : null}
+
+          <IdentityLayer
+            status={status}
+            onDisconnect={handleDisconnect}
+          />
+        </div>
+      </div>
+    </main>
+  )
+}
+
+export default function App() {
+  const [path, setPath] = useState(() => window.location.pathname)
+
+  useEffect(() => {
+    const onPopState = () => {
+      setPath(window.location.pathname)
+    }
+
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+    }
+  }, [])
+
+  if (path === '/dashboard') {
+    return <DashboardPage />
+  }
+
+  return <LandingPage />
 }

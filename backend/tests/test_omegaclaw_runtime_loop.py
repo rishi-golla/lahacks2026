@@ -22,8 +22,11 @@ class OmegaClawRuntimeLoopTests(unittest.TestCase):
         self.assertEqual(classify("Who is this person?", {}), "identify_person")
         self.assertEqual(classify("Describe what I see", {}), "describe_scene")
         self.assertEqual(classify("Google search for LAHacks updates", {}), "google_search")
-        self.assertEqual(classify("Schedule a meeting tomorrow", {}), "google_calendar")
-        self.assertEqual(classify("Draft email to team", {}), "gmail")
+        self.assertEqual(classify("Schedule a meeting tomorrow", {}), "task_scheduling_agent")
+        self.assertEqual(classify("Draft email to team", {}), "mail_sending_agent")
+        self.assertEqual(classify("Find this person from Stripe", {}), "people_search_agent")
+        self.assertEqual(classify("Remind me tomorrow to stretch", {}), "reminder_agent")
+        self.assertEqual(classify("Buy new headphones", {}), "purchase_agent")
         self.assertEqual(classify("Do something unknown", {}), "unknown")
 
     def test_run_once_dispatches_known_skill_and_sends_response(self) -> None:

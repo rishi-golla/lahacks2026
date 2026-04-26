@@ -8,11 +8,16 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.session.coordinator import SessionContext
+from app.google.models import LinkedGoogleUser
+from app.google.store import google_state_store
 from app.session.live_adapter import GeminiLiveAdapter
 from app.session.settings import LiveBackend, SessionSettings
 
 
 class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        google_state_store.reset()
+
     def test_settings_parse_comma_separated_response_modalities(self) -> None:
         settings = SessionSettings.model_validate(
             {
@@ -286,6 +291,37 @@ class GeminiLiveAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_events[0]["tool_call_id"], "call-2")
         self.assertEqual(tool_events[1]["phase"], "result")
         self.assertEqual(tool_events[1]["result_summary"], "Bob is a product manager.")
+
+    async def test_google_protected_action_prompts_for_identity_confirmation(self) -> None:
+        google_state_store.set_active_user(
+            LinkedGoogleUser(
+                display_name="Rishi Golla",
+                email="rishi@example.com",
+                google_subject="google-subject-1",
+                granted_scopes=["https://www.googleapis.com/auth/gmail.send"],
+                connected_at="2026-04-25T21:30:00Z",
+            )
+        )
+        session = _FakeGeminiSession()
+        sender = _FakeSender()
+        adapter = _build_adapter(session)
+        await adapter.open(SessionContext(), _hello_payload(), sender)
+
+        response = _live_response_with_tool_call(
+            "call-google-confirm",
+            "agent",
+            {
+                "intent": "gmail",
+                "recipient": "sarah@example.com",
+                "subject": "Hello",
+                "body": "Checking in",
+            },
+        )
+        await adapter._handle_server_message(response, sender, SessionContext())
+
+        self.assertEqual(len(session.tool_response_calls), 1)
+        output = session.tool_response_calls[0][0].response["output"]
+        self.assertIn("are you rishi golla", output.lower())
 
     async def test_agent_tool_call_timeout_sends_fallback_function_response(self) -> None:
         session = _FakeGeminiSession()

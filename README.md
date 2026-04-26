@@ -8,6 +8,7 @@ This repository is not a polished end-to-end glasses runtime yet. Today it conta
 
 - an iOS debug app with WebSocket transport, audio loopback/playback, mock/real glasses modes, DAT registration UI, and manual photo capture
 - a Python backend with `/health`, `/session`, echo mode, and real Gemini Live mode
+- a Google-connected Edith site for linking one current action-enabled user and viewing shared-glasses history
 - local OmegaClaw and ContextLens/Agentverse integration modules
 - product and architecture guidance in `PRD.md`
 
@@ -36,6 +37,7 @@ Agentverse is the specialist-skill layer. The local `contextlens-agent/` service
 ```text
 .
 |-- apps/
+|   |-- edith/                # Google connect + activity history site
 |   `-- ios/                  # XcodeGen-based iOS client
 |-- backend/                  # FastAPI backend and Gemini Live bridge
 |-- contextlens-agent/         # ContextLens FastAPI + uAgents skill service
@@ -64,6 +66,24 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The current local endpoint is `ws://127.0.0.1:8000/session`.
+
+To enable Google connect from the Edith site, also configure:
+
+```env
+GOOGLE_OAUTH_CLIENT_ID=your_google_web_client_id
+GOOGLE_OAUTH_CLIENT_SECRET=your_google_web_client_secret
+GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:8000/google/connect/callback
+```
+
+### Edith
+
+```bash
+cd apps/edith
+npm install
+npm run dev
+```
+
+Edith expects the backend on `http://127.0.0.1:8000` by default.
 
 ### iOS
 
@@ -158,6 +178,13 @@ The repo is aligned around four active gaps:
 - Agentverse: host/register/validate the checked-in ContextLens service
 
 The near-term milestone is reliable speech + fresh visual context through the iOS app and Gemini. After that, the target is Gemini -> OmegaClaw -> Agentverse -> spoken response.
+
+For the shared-glasses Google workflow, the current implementation is:
+
+- a user connects Google on Edith
+- that user becomes the current action-enabled user for the shared glasses
+- protected Gmail/Calendar/Tasks actions require spoken confirmation
+- the site shows the resulting activity history
 
 ## References
 
