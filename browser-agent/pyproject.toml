@@ -1,0 +1,13 @@
+[project]
+name = "playwright-agent"
+version = "0.1.0"
+description = "uAgents adapter for a Playwright MCP server."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "mcp",
+    "uagents",
+    "uagents-adapter",
+]
+
+[tool.uv]
+package = false
