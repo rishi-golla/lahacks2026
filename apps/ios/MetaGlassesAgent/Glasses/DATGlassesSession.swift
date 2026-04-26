@@ -32,12 +32,15 @@ final class DATGlassesSession: GlassesSession {
     func start() async throws {
         continuation.yield(.connecting)
 
-        var cameraStatus = try await wearables.checkPermissionStatus(.camera)
-        if cameraStatus != .granted {
-            cameraStatus = try await wearables.requestPermission(.camera)
-        }
-        guard cameraStatus == .granted else {
-            throw GlassesSessionError.cameraPermissionDenied
+        do {
+            let cameraStatus = try await wearables.checkPermissionStatus(.camera)
+            guard cameraStatus == .granted else {
+                throw GlassesSessionError.cameraPermissionDenied
+            }
+        } catch let error as GlassesSessionError {
+            throw error
+        } catch {
+            throw GlassesSessionError.cameraPermissionUnavailable(error.localizedDescription)
         }
 
         let session = try wearables.createSession(deviceSelector: deviceSelector)

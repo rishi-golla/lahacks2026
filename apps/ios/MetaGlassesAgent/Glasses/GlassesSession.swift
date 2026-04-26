@@ -26,6 +26,7 @@ enum GlassesSessionError: Error, Equatable {
     case photoCaptureRejected
     case photoCaptureTimedOut
     case cameraPermissionDenied
+    case cameraPermissionUnavailable(String)
     case notImplemented
 }
 
@@ -43,7 +44,9 @@ extension GlassesSessionError: LocalizedError {
         case .photoCaptureTimedOut:
             return "Timed out waiting for a glasses photo."
         case .cameraPermissionDenied:
-            return "Camera permission is not granted for the glasses."
+            return "Camera permission is not granted for the glasses. Open Debug controls, register DAT if needed, then request camera permission."
+        case .cameraPermissionUnavailable(let message):
+            return "Could not check glasses camera permission: \(message). Make sure Bluetooth is on, the glasses are paired, and DAT registration is granted."
         case .notImplemented:
             return "This glasses feature is not implemented yet."
         }

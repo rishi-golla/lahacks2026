@@ -87,6 +87,7 @@ struct ContentView: View {
                     .scaledToFill()
                     .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .id(viewModel.coordinator.visualContextFrameCount)
             } else {
                 RoundedRectangle(cornerRadius: 14)
                     .fill(.secondary.opacity(0.14))
